@@ -132,6 +132,14 @@ QQ_ENABLE_MARKDOWN=false
 CODEX_ENABLE_SEARCH=true
 ```
 
+Codex 单次任务超时时间，单位是毫秒：
+
+```env
+CODEX_TIMEOUT_MS=180000
+```
+
+超过该时间后，QQBot 会中止当前 Codex 进程并返回超时状态。长时间构建、联网搜索或生成任务可以适当调大这个值。
+
 收到普通消息后、启动 Codex 前发送的提示文案：
 
 ```env
