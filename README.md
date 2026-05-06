@@ -255,3 +255,7 @@ npm run dev
 - QQBot 使用 QQ 官方 OpenAPI 和 WebSocket Gateway。
 - QQ 机器人后台需要开启单聊消息事件权限。
 - `.env`、`data/`、`workspace/`、`codex-home/`、`dist/`、`node_modules/` 已被 git 忽略。
+
+## 许可证
+
+本项目使用 MIT License，见 [LICENSE](./LICENSE)。
