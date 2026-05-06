@@ -10,7 +10,7 @@ async function main(): Promise<void> {
   loadRuntimeEnv();
   configureGlobalProxy();
 
-  const message = parseMessage(process.argv.slice(2));
+  const { format, message } = parseArgs(process.argv.slice(2));
   if (!message) {
     usage("Missing notification message.");
   }
@@ -25,7 +25,11 @@ async function main(): Promise<void> {
 
   const auth = new QQAuth(config);
   const messages = new QQMessages(config, auth);
-  await messages.sendText({ openid }, message);
+  if (format === "markdown") {
+    await messages.sendMarkdown({ openid }, message);
+  } else {
+    await messages.sendText({ openid }, message);
+  }
   console.log("sent");
 }
 
@@ -57,14 +61,59 @@ function parseEnvValue(value: string): string {
   return value;
 }
 
-function parseMessage(args: string[]): string {
-  const text = args.join(" ").trim();
-  return text || "";
+type NotifyFormat = "text" | "markdown";
+
+interface NotifyArgs {
+  format: NotifyFormat;
+  message: string;
+}
+
+function parseArgs(args: string[]): NotifyArgs {
+  let format = parseFormat(process.env.QQ_NOTIFY_FORMAT) ?? "text";
+  const messageParts: string[] = [];
+
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    if (arg === "--text" || arg === "--plain-text") {
+      format = "text";
+      continue;
+    }
+    if (arg === "--markdown") {
+      format = "markdown";
+      continue;
+    }
+    if (arg === "--format") {
+      const next = args[index + 1];
+      if (!next) usage("Missing value for --format.");
+      const parsed = parseFormat(next);
+      if (!parsed) usage("Invalid --format. Expected text or markdown.");
+      format = parsed;
+      index += 1;
+      continue;
+    }
+    if (arg.startsWith("--format=")) {
+      const parsed = parseFormat(arg.slice("--format=".length));
+      if (!parsed) usage("Invalid --format. Expected text or markdown.");
+      format = parsed;
+      continue;
+    }
+    messageParts.push(arg);
+  }
+
+  return { format, message: messageParts.join(" ").trim() };
+}
+
+function parseFormat(value: string | undefined): NotifyFormat | undefined {
+  const normalized = value?.trim().toLowerCase();
+  if (!normalized) return undefined;
+  if (["text", "plain", "plain-text", "plaintext"].includes(normalized)) return "text";
+  if (["markdown", "md"].includes(normalized)) return "markdown";
+  return undefined;
 }
 
 function usage(message: string): never {
   console.error(message);
-  console.error("Usage: qq-notify <message>");
+  console.error("Usage: qq-notify [--text|--markdown|--format text|markdown] <message>");
   process.exit(1);
 }
 

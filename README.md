@@ -293,9 +293,18 @@ qq-memory clear
 
 ```bash
 qq-notify "消息内容"
+qq-notify --text "消息内容"
+qq-notify --markdown "**提醒：** 该起床了"
+qq-notify --format markdown "**提醒：** 该起床了"
 ```
 
-它会发送一条孤立的 QQ 单聊文本消息，不携带上下文。默认目标是 bot 最近收到的单聊 `openid`，该值保存在：
+它会发送一条孤立的 QQ 单聊消息，不携带上下文。默认使用纯文本；可以通过 `--markdown` 或 `--format markdown` 发送 QQ Markdown，发送失败时会按 bot 配置回退为普通文本。也可以设置默认格式：
+
+```bash
+QQ_NOTIFY_FORMAT=markdown qq-notify "**提醒：** 该起床了"
+```
+
+默认目标是 bot 最近收到的单聊 `openid`，该值保存在：
 
 ```text
 ./data/state.json
@@ -325,7 +334,7 @@ DATA_DIR=/data
 WORKSPACE_DIR=/workspace
 QQ_API_BASE=https://api.sgroup.qq.com
 
-0 8 * * * root qq-notify "该起床了"
+0 8 * * * root qq-notify --text "该起床了"
 ```
 
 不要把 QQ 密钥写进 cron 命令或 cron 文件。bot 启动时会生成权限为 `0600` 的运行时环境文件：

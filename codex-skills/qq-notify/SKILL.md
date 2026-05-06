@@ -15,6 +15,16 @@ Command:
 qq-notify "<message>"
 ```
 
+The default format is plain text. You may choose the message format explicitly:
+
+```bash
+qq-notify --text "<message>"
+qq-notify --markdown "**Reminder:** message"
+qq-notify --format markdown "**Reminder:** message"
+```
+
+`--text` and `--plain-text` both send plain text. `--markdown` sends QQ Markdown and falls back to plain text if QQ Markdown is disabled or unavailable in the bot configuration. `QQ_NOTIFY_FORMAT=text|markdown` can be used as a default, but command-line flags take precedence.
+
 For scheduled reminders, create a cron file in `/etc/cron.d/`. The container starts cron automatically.
 
 Example for "每天早上8点提醒我该起床了":
@@ -28,7 +38,7 @@ DATA_DIR=/data
 WORKSPACE_DIR=/workspace
 QQ_API_BASE=https://api.sgroup.qq.com
 
-0 8 * * * root qq-notify "该起床了"
+0 8 * * * root qq-notify --text "该起床了"
 EOF
 chmod 0644 /etc/cron.d/qq-wakeup
 ```
@@ -49,7 +59,7 @@ QQBOT_RUNTIME_ENV_FILE=/path/to/qqbot.env
 
 Behavior:
 
-- Sends one isolated plain-text QQ private message.
+- Sends one isolated QQ private message in plain-text or Markdown format.
 - Uses the most recent QQ private chat openid recorded by the bot.
 - Loads QQ credentials and proxy settings from `/data/qqbot.env`.
 - Does not attach conversation context.
