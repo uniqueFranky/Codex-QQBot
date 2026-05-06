@@ -44,6 +44,22 @@ if command -v cron >/dev/null 2>&1; then
   service cron start >/dev/null 2>&1 || cron
 fi
 
+ensure_bash_loads_codex_profile() {
+  marker="# codex-qqbot: source persistent Codex profile"
+  for profile_path in /root/.profile /root/.bash_profile; do
+    touch "$profile_path"
+    if ! grep -Fq "$marker" "$profile_path"; then
+      cat >> "$profile_path" <<'EOF'
+
+# codex-qqbot: source persistent Codex profile
+if [ -f "${CODEX_HOME:-/codex-home}/.profile" ]; then
+  . "${CODEX_HOME:-/codex-home}/.profile"
+fi
+EOF
+    fi
+  done
+}
+
 load_profile() {
   profile_path="$1"
   if [ -f "$profile_path" ]; then
@@ -53,8 +69,8 @@ load_profile() {
   fi
 }
 
+ensure_bash_loads_codex_profile
 load_profile /etc/profile
 load_profile /root/.profile
-load_profile "${CODEX_HOME:-/codex-home}/.profile"
 
 exec "$@"
