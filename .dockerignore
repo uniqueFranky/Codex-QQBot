@@ -1,0 +1,10 @@
+node_modules
+dist
+data
+workspace
+codex-home
+.env
+.git
+.agents
+.codex
+npm-debug.log

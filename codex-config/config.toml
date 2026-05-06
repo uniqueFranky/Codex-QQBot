@@ -1,0 +1,44 @@
+model_provider = "vapi"  # 设置API供应商
+model = "gpt-5.5"        # 填写支持codex的模型即可
+# model_reasoning_effort = "low" # 思考级别 low medium（默认） high minimal，不需要可以#注释掉
+
+# 供应商设置
+[model_providers.vapi]
+name = "VAPI"
+base_url = "__V_API_BASE_URL__"
+env_key = "V_API_KEY"    # 保留这个值，不需要替换为apikey
+wire_api = "responses"
+query_params = {}
+request_max_retries = 4            # 失败最大重试次数
+stream_max_retries = 10            # 流中断后最大重试次数
+
+# 可选：定义一个 profile，便于命令行快速切换
+[profiles.vapi]
+model_provider = "vapi"
+model = "gpt-5"
+approval_policy = "on-request"      # 需要时再询问是否执行
+sandbox_mode = "workspace-write"    # 允许在当前工程写文件，依旧禁网
+
+[projects."/home/uniquefranky/数算B"]
+trust_level = "trusted"
+
+[projects."/home/uniquefranky/mvvm-refactor"]
+trust_level = "trusted"
+
+[projects."/home/uniquefranky/mvvm-refactor/analysis"]
+trust_level = "trusted"
+
+[projects."/home/uniquefranky/dppl"]
+trust_level = "trusted"
+
+[projects."/home/uniquefranky/codex-qqbot"]
+trust_level = "trusted"
+
+[projects."/home/uniquefranky"]
+trust_level = "trusted"
+
+[projects."/workspace"]
+trust_level = "trusted"
+
+[tui.model_availability_nux]
+"gpt-5.5" = 4
