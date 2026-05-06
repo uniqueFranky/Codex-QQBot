@@ -50,11 +50,12 @@ export class BotController {
 
     if (text === "/status") {
       const state = this.stateStore.load();
+      const session = state.currentSessionName ? `，session: ${state.currentSessionName}` : "";
       await this.messages.sendText(
         message,
         this.codex.isRunning()
-          ? `正在运行。threadId: ${state.threadId ?? "未建立"}`
-          : `空闲。threadId: ${state.threadId ?? "未建立"}`
+          ? `正在运行。threadId: ${state.threadId ?? "未建立"}${session}`
+          : `空闲。threadId: ${state.threadId ?? "未建立"}${session}`
       );
       return;
     }
@@ -66,6 +67,11 @@ export class BotController {
 
     if (text === "/memory" || text.startsWith("/memory ")) {
       await this.handleMemoryCommand(message, text);
+      return;
+    }
+
+    if (text === "/session" || text.startsWith("/session ")) {
+      await this.handleSessionCommand(message, text);
       return;
     }
 
@@ -179,6 +185,193 @@ export class BotController {
     }
   }
 
+  private async handleSessionCommand(message: QQPrivateMessage, text: string): Promise<void> {
+    const rest = text.slice("/session".length).trim();
+    if (!rest || rest === "list" || rest === "show") {
+      await this.showSessions(message);
+      return;
+    }
+
+    if (rest.startsWith("name ")) {
+      await this.nameCurrentSession(message, rest.slice(5));
+      return;
+    }
+
+    if (rest.startsWith("new ")) {
+      await this.createNamedSession(message, rest.slice(4));
+      return;
+    }
+
+    if (rest.startsWith("resume ")) {
+      await this.resumeNamedSession(message, rest.slice(7));
+      return;
+    }
+
+    if (rest.startsWith("rm ") || rest.startsWith("delete ") || rest.startsWith("remove ")) {
+      const name = rest.replace(/^(rm|delete|remove)\s+/, "").trim();
+      await this.removeNamedSession(message, name);
+      return;
+    }
+
+    await this.messages.sendText(message, sessionUsage());
+  }
+
+  private async showSessions(message: QQPrivateMessage): Promise<void> {
+    const state = this.stateStore.load();
+    const sessions = state.sessions ?? {};
+    const names = Object.keys(sessions).sort();
+    const current = state.currentSessionName ?? "(未命名)";
+
+    if (names.length === 0) {
+      await this.messages.sendText(
+        message,
+        `当前 session: ${current}\n还没有命名 session。\n${sessionUsage()}`
+      );
+      return;
+    }
+
+    const lines = names.map((name) => {
+      const marker = name === state.currentSessionName ? "* " : "- ";
+      const thread = sessions[name]?.threadId ?? "未建立";
+      return `${marker}${name}: ${thread}`;
+    });
+    await this.messages.sendMarkdown(
+      message,
+      [`当前 session: ${current}`, "", "命名 session:", ...lines].join("\n")
+    );
+  }
+
+  private async nameCurrentSession(message: QQPrivateMessage, rawName: string): Promise<void> {
+    const parsed = parseSessionName(rawName);
+    if (!parsed.ok) {
+      await this.messages.sendText(message, parsed.error);
+      return;
+    }
+
+    const state = this.stateStore.load();
+    if (!state.threadId) {
+      await this.messages.sendText(message, "当前还没有 Codex thread。请先发送一条普通消息建立会话。");
+      return;
+    }
+
+    const now = new Date().toISOString();
+    const sessions = { ...(state.sessions ?? {}) };
+    sessions[parsed.name] = {
+      threadId: state.threadId,
+      createdAt: sessions[parsed.name]?.createdAt ?? now,
+      updatedAt: now
+    };
+    this.stateStore.patch({ sessions, currentSessionName: parsed.name });
+    await this.messages.sendText(message, `已将当前 session 命名为：${parsed.name}`);
+  }
+
+  private async createNamedSession(message: QQPrivateMessage, input: string): Promise<void> {
+    const { name, discard } = parseSessionNameAndFlags(input);
+    const parsed = parseSessionName(name);
+    if (!parsed.ok) {
+      await this.messages.sendText(message, parsed.error);
+      return;
+    }
+
+    const state = this.stateStore.load();
+    if (hasUnnamedActiveSession(state) && !discard) {
+      await this.messages.sendText(
+        message,
+        [
+          "当前 session 已有 thread 但未命名。",
+          `请先用 /session name <名字> 保存它，或用 /session new ${parsed.name} --discard 丢弃当前未命名 session。`
+        ].join("\n")
+      );
+      return;
+    }
+
+    if (state.sessions?.[parsed.name]) {
+      await this.messages.sendText(message, `命名 session 已存在：${parsed.name}`);
+      return;
+    }
+
+    this.codex.stop();
+    const now = new Date().toISOString();
+    const sessions = { ...(state.sessions ?? {}) };
+    sessions[parsed.name] = { createdAt: now, updatedAt: now };
+    this.stateStore.patch({
+      threadId: undefined,
+      currentSessionName: parsed.name,
+      sessions,
+      injectMemoryOnNextRun: true
+    });
+    await this.messages.sendText(
+      message,
+      `已创建新 session：${parsed.name}。下一条普通消息会建立新的 Codex thread。`
+    );
+  }
+
+  private async resumeNamedSession(message: QQPrivateMessage, input: string): Promise<void> {
+    const { name, discard } = parseSessionNameAndFlags(input);
+    const parsed = parseSessionName(name);
+    if (!parsed.ok) {
+      await this.messages.sendText(message, parsed.error);
+      return;
+    }
+
+    const state = this.stateStore.load();
+    if (hasUnnamedActiveSession(state) && !discard) {
+      await this.messages.sendText(
+        message,
+        [
+          "当前 session 已有 thread 但未命名。",
+          `请先用 /session name <名字> 保存它，或用 /session resume ${parsed.name} --discard 丢弃当前未命名 session。`
+        ].join("\n")
+      );
+      return;
+    }
+
+    const session = state.sessions?.[parsed.name];
+    if (!session) {
+      await this.messages.sendText(message, `没有找到命名 session：${parsed.name}`);
+      return;
+    }
+
+    this.codex.stop();
+    this.stateStore.patch({
+      threadId: session.threadId,
+      currentSessionName: parsed.name,
+      injectMemoryOnNextRun: !session.threadId
+    });
+    await this.messages.sendText(
+      message,
+      session.threadId
+        ? `已恢复 session：${parsed.name}`
+        : `已恢复 session：${parsed.name}。它还没有 thread，下一条普通消息会建立新的 Codex thread。`
+    );
+  }
+
+  private async removeNamedSession(message: QQPrivateMessage, name: string): Promise<void> {
+    const parsed = parseSessionName(name);
+    if (!parsed.ok) {
+      await this.messages.sendText(message, parsed.error);
+      return;
+    }
+
+    const state = this.stateStore.load();
+    const sessions = { ...(state.sessions ?? {}) };
+    if (!sessions[parsed.name]) {
+      await this.messages.sendText(message, `没有找到命名 session：${parsed.name}`);
+      return;
+    }
+
+    delete sessions[parsed.name];
+    this.stateStore.patch({
+      sessions,
+      currentSessionName:
+        state.currentSessionName === parsed.name ? undefined : state.currentSessionName
+    });
+    await this.messages.sendText(
+      message,
+      `已删除 session 名称：${parsed.name}。实际 Codex session 记录未删除。`
+    );
+  }
+
   private async startCodexTask(message: QQPrivateMessage, text: string): Promise<void> {
     const currentRun = ++this.runId;
     if (this.codex.isRunning()) {
@@ -222,8 +415,10 @@ export class BotController {
         imagePaths,
         systemPrompt: buildMemorySystemPrompt(memory, memoryDiff),
         onThreadStarted: (threadId) => {
+          const currentState = this.stateStore.load();
           this.stateStore.patch({
             threadId,
+            sessions: updateCurrentNamedSession(currentState, threadId),
             injectMemoryOnNextRun: false,
             pendingMemoryDiff: undefined
           });
@@ -249,8 +444,10 @@ export class BotController {
       await flush();
 
       if (result.threadId) {
+        const currentState = this.stateStore.load();
         this.stateStore.patch({
           threadId: result.threadId,
+          sessions: updateCurrentNamedSession(currentState, result.threadId),
           injectMemoryOnNextRun: false,
           pendingMemoryDiff: undefined
         });
@@ -318,4 +515,61 @@ function buildMemorySystemPrompt(memory: string, memoryDiff: string): string | u
   if (memory) parts.push(`以下是当前用户记忆：\n${memory}`);
   if (memoryDiff) parts.push(`以下是上次注入后发生的记忆变更 diff：\n${memoryDiff}`);
   return parts.length > 0 ? parts.join("\n\n") : undefined;
+}
+
+interface SessionNameResult {
+  ok: true;
+  name: string;
+}
+
+interface SessionNameError {
+  ok: false;
+  error: string;
+}
+
+function parseSessionName(input: string): SessionNameResult | SessionNameError {
+  const name = input.trim();
+  if (!name) return { ok: false, error: "缺少 session 名称。" };
+  if (/\s/.test(name)) return { ok: false, error: "session 名称不能包含空白字符。" };
+  if (name.length > 80) return { ok: false, error: "session 名称太长，最多 80 个字符。" };
+  return { ok: true, name };
+}
+
+function parseSessionNameAndFlags(input: string): { name: string; discard: boolean } {
+  const parts = input.trim().split(/\s+/).filter(Boolean);
+  const discard = parts.includes("--discard");
+  return { name: parts.filter((part) => part !== "--discard").join(" "), discard };
+}
+
+function hasUnnamedActiveSession(state: { threadId?: string; currentSessionName?: string }): boolean {
+  return Boolean(state.threadId && !state.currentSessionName);
+}
+
+function updateCurrentNamedSession(
+  state: { currentSessionName?: string; sessions?: Record<string, { createdAt: string; updatedAt: string; threadId?: string }> },
+  threadId: string
+): Record<string, { createdAt: string; updatedAt: string; threadId?: string }> | undefined {
+  const name = state.currentSessionName;
+  if (!name) return state.sessions;
+
+  const now = new Date().toISOString();
+  const sessions = { ...(state.sessions ?? {}) };
+  sessions[name] = {
+    threadId,
+    createdAt: sessions[name]?.createdAt ?? now,
+    updatedAt: now
+  };
+  return sessions;
+}
+
+function sessionUsage(): string {
+  return [
+    "用法：",
+    "/session list",
+    "/session name <名字>",
+    "/session new <名字>",
+    "/session resume <名字>",
+    "/session rm <名字>",
+    "切换时若当前 session 未命名，可追加 --discard 明确丢弃。"
+  ].join("\n");
 }

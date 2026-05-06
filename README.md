@@ -11,6 +11,7 @@
 - 只支持 QQ 单聊。
 - 不做 openid 白名单过滤，任何单聊发送者都可以使用。
 - `/new` 之前共享同一个 Codex 会话。
+- 支持给 Codex 会话命名、创建、恢复和删除命名；删除命名不会删除 Codex 实际 session 记录。
 - 如果 Codex 正在执行任务，新的普通消息会立即中止当前任务，并把新消息作为纠偏继续执行。
 - 支持接收 QQ 单聊图片，下载到 `workspace/qq-images` 后传给 Codex。
 - 支持发送 Codex 在 `workspace` 中新生成或修改的图片文件。
@@ -29,6 +30,7 @@
 /status   查看当前是否空闲或正在执行
 /run      让 Codex 运行一条 bash 命令
 /memory   查看和管理容器内 Codex 记忆
+/session  查看和管理命名 Codex 会话
 ```
 
 `/run` 示例：
@@ -39,6 +41,26 @@
 ```
 
 `/run` 不由 QQBot 直接执行命令，而是交给容器内 Codex CLI 执行并汇报结果，因此仍会走现有的中断、状态、超时和日志机制。
+
+`/session` 支持的命令：
+
+```text
+/session                 查看当前和已命名 session
+/session list            查看当前和已命名 session
+/session name <name>     给当前 Codex 会话命名
+/session new <name>      创建新的命名 session
+/session resume <name>   恢复命名 session
+/session rm <name>       删除 session 名称，不删除实际 Codex session 记录
+```
+
+如果当前 session 已经建立 Codex thread 但还没有命名，执行 `/session new <name>` 或 `/session resume <name>` 会先提醒你命名，避免误丢上下文。确认不要保留当前未命名 session 时，可以追加 `--discard`：
+
+```text
+/session new <name> --discard
+/session resume <name> --discard
+```
+
+命名 session 只保存在 `data/state.json` 中，用来记录名称到 Codex `threadId` 的映射。`/session rm <name>` 只删除这个映射，不会删除 `codex-home` 中的 Codex 实际 session 文件。`/new` 仍然可用，会清空当前 `threadId` 和当前 session 名称，但不会删除已命名 session 列表。
 
 ## 目录结构
 
@@ -82,17 +104,17 @@ QQ_APP_SECRET=你的 AppSecret
 
 ```bash
 export V_API_KEY=你的 API key
-export V_API_BASE_URL=https://lanxiu.eu.cc/v1
+export V_API_BASE_URL=你的BASE URL
 ```
 
 也可以写进 `.env`：
 
 ```env
 V_API_KEY=你的 API key
-V_API_BASE_URL=https://lanxiu.eu.cc/v1
+V_API_BASE_URL=你的BASE URL
 ```
 
-如果宿主机代理不是 `127.0.0.1:8899`，修改 `.env` 中的代理配置：
+如果宿主机代理不是 `127.0.0.1:18899`，修改 `.env` 中的代理配置：
 
 ```env
 HOST_PROXY_PORT=8899
@@ -374,8 +396,9 @@ QQBOT_RUNTIME_ENV_FILE=/path/to/qqbot.env
 ```text
 /etc/profile
 /root/.profile
-/codex-home/.profile
 ```
+
+启动脚本会确保 `/root/.profile` 和 `/root/.bash_profile` 自动加载 `/codex-home/.profile`。因此 QQBot 主进程以及 Codex 后续执行的 `bash -lc` 命令都会继承同一份持久化 profile。
 
 其中 `/codex-home` 挂载到当前项目的 `./codex-home`，因此可以创建：
 

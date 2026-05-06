@@ -2,11 +2,19 @@ import { readFileSync, writeFileSync } from "node:fs";
 
 export interface BotState {
   threadId?: string;
+  currentSessionName?: string;
+  sessions?: Record<string, NamedSession>;
   qqSessionId?: string;
   qqSeq?: number;
   lastOpenid?: string;
   injectMemoryOnNextRun?: boolean;
   pendingMemoryDiff?: string;
+}
+
+export interface NamedSession {
+  threadId?: string;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export class StateStore {
@@ -41,6 +49,7 @@ export class StateStore {
   resetThread(): BotState {
     const current = this.load();
     delete current.threadId;
+    delete current.currentSessionName;
     current.injectMemoryOnNextRun = true;
     this.save(current);
     return current;
