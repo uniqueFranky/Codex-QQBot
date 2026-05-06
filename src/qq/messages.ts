@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import type { Config } from "../config.js";
 import type { QQAuth } from "./auth.js";
 
@@ -19,6 +20,84 @@ export class QQMessages {
     const chunks = splitText(text, this.config.replyChunkSize);
     for (const chunk of chunks) {
       await this.sendTextChunk(context, chunk);
+    }
+  }
+
+  async sendMarkdown(context: C2CReplyContext, markdown: string): Promise<void> {
+    if (!this.config.enableMarkdown) {
+      await this.sendText(context, markdown);
+      return;
+    }
+
+    const chunks = splitText(markdown, this.config.replyChunkSize);
+    for (const chunk of chunks) {
+      try {
+        await this.sendMarkdownChunk(context, chunk);
+      } catch (error) {
+        console.warn("QQ markdown send failed, falling back to text", error);
+        await this.sendTextChunk(context, chunk);
+      }
+    }
+  }
+
+  async sendImage(context: C2CReplyContext, filePath: string): Promise<void> {
+    const fileInfo = await this.uploadImage(context.openid, filePath);
+    await this.sendMedia(context, fileInfo);
+  }
+
+  private async uploadImage(openid: string, filePath: string): Promise<string> {
+    const token = await this.auth.getAccessToken();
+    const url = `${this.config.qqApiBase}/v2/users/${encodeURIComponent(openid)}/files`;
+    const fileData = readFileSync(filePath).toString("base64");
+
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        authorization: `QQBot ${token}`,
+        "content-type": "application/json"
+      },
+      body: JSON.stringify({
+        file_type: 1,
+        srv_send_msg: false,
+        file_data: fileData
+      })
+    });
+
+    const body = (await response.json()) as { file_info?: string };
+    if (!response.ok || !body.file_info) {
+      throw new Error(`QQ upload image failed: ${response.status} ${JSON.stringify(body)}`);
+    }
+
+    return body.file_info;
+  }
+
+  private async sendMedia(context: C2CReplyContext, fileInfo: string): Promise<void> {
+    const token = await this.auth.getAccessToken();
+    const url = `${this.config.qqApiBase}/v2/users/${encodeURIComponent(
+      context.openid
+    )}/messages`;
+
+    const body: Record<string, unknown> = {
+      msg_type: 7,
+      media: { file_info: fileInfo },
+      msg_seq: this.seq++
+    };
+
+    if (context.msgId) body.msg_id = context.msgId;
+    if (context.eventId) body.event_id = context.eventId;
+
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        authorization: `QQBot ${token}`,
+        "content-type": "application/json"
+      },
+      body: JSON.stringify(body)
+    });
+
+    if (!response.ok) {
+      const responseText = await response.text();
+      throw new Error(`QQ send media failed: ${response.status} ${responseText}`);
     }
   }
 
@@ -51,6 +130,36 @@ export class QQMessages {
       throw new Error(`QQ send message failed: ${response.status} ${responseText}`);
     }
   }
+
+  private async sendMarkdownChunk(context: C2CReplyContext, content: string): Promise<void> {
+    const token = await this.auth.getAccessToken();
+    const url = `${this.config.qqApiBase}/v2/users/${encodeURIComponent(
+      context.openid
+    )}/messages`;
+
+    const body: Record<string, unknown> = {
+      msg_type: 2,
+      markdown: { content },
+      msg_seq: this.seq++
+    };
+
+    if (context.msgId) body.msg_id = context.msgId;
+    if (context.eventId) body.event_id = context.eventId;
+
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        authorization: `QQBot ${token}`,
+        "content-type": "application/json"
+      },
+      body: JSON.stringify(body)
+    });
+
+    if (!response.ok) {
+      const responseText = await response.text();
+      throw new Error(`QQ send markdown failed: ${response.status} ${responseText}`);
+    }
+  }
 }
 
 function splitText(text: string, maxLength: number): string[] {
@@ -66,4 +175,3 @@ function splitText(text: string, maxLength: number): string[] {
   chunks.push(remaining);
   return chunks;
 }
-

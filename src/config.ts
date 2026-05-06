@@ -15,6 +15,11 @@ export interface Config {
   codexSandboxMode: "workspace-write" | "danger-full-access";
   statusThrottleMs: number;
   replyChunkSize: number;
+  maxInputImages: number;
+  maxOutputImages: number;
+  maxImageBytes: number;
+  enableMarkdown: boolean;
+  codexEnableSearch: boolean;
 }
 
 function loadDotEnv(filePath: string): void {
@@ -68,6 +73,14 @@ function optionalSandboxMode(): "workspace-write" | "danger-full-access" {
   return value;
 }
 
+function optionalBoolean(name: string, fallback: boolean): boolean {
+  const value = process.env[name]?.trim().toLowerCase();
+  if (!value) return fallback;
+  if (["1", "true", "yes", "on"].includes(value)) return true;
+  if (["0", "false", "no", "off"].includes(value)) return false;
+  throw new Error(`Invalid boolean env var: ${name}`);
+}
+
 export function loadConfig(): Config {
   loadDotEnv(path.resolve(process.cwd(), ".env"));
 
@@ -95,6 +108,11 @@ export function loadConfig(): Config {
     codexHome,
     codexSandboxMode: optionalSandboxMode(),
     statusThrottleMs: optionalNumber("STATUS_THROTTLE_MS", 2_500),
-    replyChunkSize: optionalNumber("REPLY_CHUNK_SIZE", 1_500)
+    replyChunkSize: optionalNumber("REPLY_CHUNK_SIZE", 1_500),
+    maxInputImages: optionalNumber("MAX_INPUT_IMAGES", 4),
+    maxOutputImages: optionalNumber("MAX_OUTPUT_IMAGES", 4),
+    maxImageBytes: optionalNumber("MAX_IMAGE_BYTES", 10 * 1024 * 1024),
+    enableMarkdown: optionalBoolean("QQ_ENABLE_MARKDOWN", true),
+    codexEnableSearch: optionalBoolean("CODEX_ENABLE_SEARCH", false)
   };
 }

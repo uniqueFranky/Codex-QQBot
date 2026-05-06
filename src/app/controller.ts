@@ -3,6 +3,7 @@ import type { QQMessages } from "../qq/messages.js";
 import type { QQPrivateMessage } from "../qq/gateway.js";
 import type { CodexRunner } from "../codex/runner.js";
 import type { Config } from "../config.js";
+import { findNewOutputImages, saveInputImages } from "./images.js";
 
 export class BotController {
   private lastStatusAt = 0;
@@ -18,7 +19,10 @@ export class BotController {
 
   async handlePrivateMessage(message: QQPrivateMessage): Promise<void> {
     const text = message.content.trim();
-    if (!text) return;
+    const hasImages = message.attachments.some((attachment) =>
+      attachment.contentType.startsWith("image/")
+    );
+    if (!text && !hasImages) return;
 
     if (text === "/new") {
       this.codex.stop();
@@ -48,7 +52,7 @@ export class BotController {
       return;
     }
 
-    await this.startCodexTask(message, text);
+    await this.startCodexTask(message, text || "请分析这张图片。");
   }
 
   private async startCodexTask(message: QQPrivateMessage, text: string): Promise<void> {
@@ -61,6 +65,11 @@ export class BotController {
     }
 
     const state = this.stateStore.load();
+    const startedAtMs = Date.now();
+    const imagePaths = await saveInputImages(this.config, message.attachments, message.id);
+    if (imagePaths.length > 0) {
+      await this.messages.sendText(message, `已收到 ${imagePaths.length} 张图片，正在交给 Codex。`);
+    }
     let buffered = "";
     let flushTimer: NodeJS.Timeout | undefined;
 
@@ -68,7 +77,7 @@ export class BotController {
       if (!buffered.trim() || currentRun !== this.runId) return;
       const textToSend = buffered;
       buffered = "";
-      await this.messages.sendText(message, textToSend);
+      await this.messages.sendMarkdown(message, textToSend);
     };
 
     const scheduleFlush = (): void => {
@@ -83,6 +92,7 @@ export class BotController {
       const result = await this.codex.run({
         prompt: text,
         threadId: state.threadId,
+        imagePaths,
         onThreadStarted: (threadId) => {
           this.stateStore.patch({ threadId });
         },
@@ -104,10 +114,15 @@ export class BotController {
       await flush();
 
       if (result.threadId) this.stateStore.patch({ threadId: result.threadId });
+      if (result.timedOut) {
+        await this.messages.sendText(message, "Codex 执行超时，已中止当前任务。");
+        return;
+      }
       if (result.interrupted) return;
       if (!result.finalText.trim()) {
         await this.messages.sendText(message, "Codex 已结束，但没有返回文本结果。");
       }
+      await this.sendOutputImages(message, startedAtMs);
     } catch (error) {
       if (flushTimer) clearTimeout(flushTimer);
       const detail = error instanceof Error ? error.message : String(error);
@@ -123,5 +138,19 @@ export class BotController {
     this.lastStatusAt = now;
     return true;
   }
-}
 
+  private async sendOutputImages(message: QQPrivateMessage, startedAtMs: number): Promise<void> {
+    const imagePaths = await findNewOutputImages(this.config, startedAtMs);
+    if (imagePaths.length === 0) return;
+
+    await this.messages.sendText(message, `检测到 ${imagePaths.length} 张输出图片，正在发送。`);
+    for (const imagePath of imagePaths) {
+      try {
+        await this.messages.sendImage(message, imagePath);
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        await this.messages.sendText(message, `图片发送失败：${detail}`);
+      }
+    }
+  }
+}

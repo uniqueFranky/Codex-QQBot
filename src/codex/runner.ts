@@ -8,6 +8,7 @@ import { describeStatus, isItemEvent, itemText, parseCodexLine } from "./events.
 export interface CodexRunOptions {
   prompt: string;
   threadId?: string;
+  imagePaths?: string[];
   onThreadStarted?: (threadId: string) => void;
   onStatus?: (status: string) => void | Promise<void>;
   onMessageDelta?: (text: string) => void | Promise<void>;
@@ -17,6 +18,7 @@ export interface CodexRunResult {
   threadId?: string;
   finalText: string;
   interrupted: boolean;
+  timedOut: boolean;
 }
 
 const WORKSPACE_RULES = `你正在通过 QQ 与用户交互。
@@ -29,6 +31,7 @@ const WORKSPACE_RULES = `你正在通过 QQ 与用户交互。
 export class CodexRunner {
   private child?: ChildProcess;
   private interrupted = false;
+  private timedOut = false;
 
   constructor(private readonly config: Config) {}
 
@@ -48,10 +51,11 @@ export class CodexRunner {
   async run(options: CodexRunOptions): Promise<CodexRunResult> {
     if (this.child) this.stop();
     this.interrupted = false;
+    this.timedOut = false;
 
     const logFile = path.join(this.config.logsDir, `codex-${Date.now()}.jsonl`);
     const logStream = createWriteStream(logFile, { flags: "a" });
-    const args = this.buildArgs(options.prompt, options.threadId);
+    const args = this.buildArgs(options.prompt, options.threadId, options.imagePaths ?? []);
 
     const child = spawn("codex", args, {
       cwd: this.config.workspaceDir,
@@ -69,6 +73,7 @@ export class CodexRunner {
 
     const timeout = setTimeout(() => {
       this.interrupted = true;
+      this.timedOut = true;
       child.kill("SIGTERM");
     }, this.config.codexTimeoutMs);
 
@@ -118,12 +123,12 @@ export class CodexRunner {
       this.child = undefined;
 
       if (this.interrupted) {
-        return { threadId, finalText, interrupted: true };
+        return { threadId, finalText, interrupted: true, timedOut: this.timedOut };
       }
       if (exitCode !== 0) {
         throw new Error(`Codex exited with code ${exitCode}. Log: ${logFile}`);
       }
-      return { threadId, finalText, interrupted: false };
+      return { threadId, finalText, interrupted: false, timedOut: false };
     } catch (error) {
       clearTimeout(timeout);
       this.child = undefined;
@@ -132,11 +137,15 @@ export class CodexRunner {
     }
   }
 
-  private buildArgs(prompt: string, threadId?: string): string[] {
+  private buildArgs(prompt: string, threadId?: string, imagePaths: string[] = []): string[] {
     const base = ["-C", this.config.workspaceDir];
 
     if (this.config.codexModel) {
       base.push("-m", this.config.codexModel);
+    }
+
+    if (this.config.codexEnableSearch) {
+      base.push("--search");
     }
 
     if (this.config.codexSandboxMode === "danger-full-access") {
@@ -154,13 +163,18 @@ export class CodexRunner {
       return [
         ...base,
         "resume",
-        threadId,
+        ...imageArgs(imagePaths),
         "--skip-git-repo-check",
         "--json",
+        threadId,
         fullPrompt
       ];
     }
 
-    return [...base, "--skip-git-repo-check", "--json", fullPrompt];
+    return [...base, "--skip-git-repo-check", "--json", ...imageArgs(imagePaths), fullPrompt];
   }
+}
+
+function imageArgs(imagePaths: string[]): string[] {
+  return imagePaths.flatMap((imagePath) => ["--image", imagePath]);
 }

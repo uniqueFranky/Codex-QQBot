@@ -7,7 +7,17 @@ export interface QQPrivateMessage {
   eventId?: string;
   openid: string;
   content: string;
+  attachments: QQAttachment[];
   raw: unknown;
+}
+
+export interface QQAttachment {
+  contentType: string;
+  filename: string;
+  size?: number;
+  url?: string;
+  width?: number;
+  height?: number;
 }
 
 interface GatewayPayload {
@@ -206,6 +216,7 @@ function extractPrivateMessage(data: unknown, payload: GatewayPayload): QQPrivat
     eventId: stringField(message, "event_id"),
     openid,
     content: normalizeContent(stringField(message, "content") ?? ""),
+    attachments: extractAttachments(message),
     raw: data
   };
 }
@@ -217,4 +228,25 @@ function stringField(object: Record<string, unknown> | undefined, key: string): 
 
 function normalizeContent(content: string): string {
   return content.replace(/<@!?\d+>/g, "").trim();
+}
+
+function extractAttachments(message: Record<string, unknown>): QQAttachment[] {
+  const attachments = message.attachments;
+  if (!Array.isArray(attachments)) return [];
+
+  return attachments
+    .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object")
+    .map((item) => ({
+      contentType: stringField(item, "content_type") ?? "",
+      filename: stringField(item, "filename") ?? "attachment",
+      size: numberField(item, "size"),
+      url: stringField(item, "url"),
+      width: numberField(item, "width"),
+      height: numberField(item, "height")
+    }));
+}
+
+function numberField(object: Record<string, unknown>, key: string): number | undefined {
+  const value = object[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
