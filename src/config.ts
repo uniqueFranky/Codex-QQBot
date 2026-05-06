@@ -8,18 +8,23 @@ export interface Config {
   workspaceDir: string;
   dataDir: string;
   stateFile: string;
+  runtimeEnvFile: string;
   logsDir: string;
   codexTimeoutMs: number;
   codexModel?: string;
   codexHome?: string;
   codexSandboxMode: "workspace-write" | "danger-full-access";
   statusThrottleMs: number;
+  receivedMessage?: string;
   replyChunkSize: number;
   maxInputImages: number;
   maxOutputImages: number;
   maxImageBytes: number;
   enableMarkdown: boolean;
   codexEnableSearch: boolean;
+  codexMemoryDir: string;
+  codexMemoryFile: string;
+  memoryMaxChars: number;
 }
 
 function loadDotEnv(filePath: string): void {
@@ -94,6 +99,10 @@ export function loadConfig(): Config {
   mkdirSync(workspaceDir, { recursive: true });
   mkdirSync(path.join(dataDir, "logs"), { recursive: true });
   if (codexHome) mkdirSync(codexHome, { recursive: true });
+  const codexMemoryDir = codexHome
+    ? path.join(codexHome, "memories")
+    : path.join(dataDir, "codex-memories");
+  mkdirSync(codexMemoryDir, { recursive: true });
 
   return {
     qqAppId: required("QQ_APP_ID"),
@@ -102,17 +111,28 @@ export function loadConfig(): Config {
     workspaceDir,
     dataDir,
     stateFile: path.join(dataDir, "state.json"),
+    runtimeEnvFile: path.join(dataDir, "qqbot.env"),
     logsDir: path.join(dataDir, "logs"),
     codexTimeoutMs: optionalNumber("CODEX_TIMEOUT_MS", 180_000),
     codexModel: process.env.CODEX_MODEL?.trim() || undefined,
     codexHome,
     codexSandboxMode: optionalSandboxMode(),
     statusThrottleMs: optionalNumber("STATUS_THROTTLE_MS", 2_500),
+    receivedMessage: optionalText("RECEIVED_MESSAGE", "已收到，Codex 正在处理。"),
     replyChunkSize: optionalNumber("REPLY_CHUNK_SIZE", 1_500),
     maxInputImages: optionalNumber("MAX_INPUT_IMAGES", 4),
     maxOutputImages: optionalNumber("MAX_OUTPUT_IMAGES", 4),
     maxImageBytes: optionalNumber("MAX_IMAGE_BYTES", 10 * 1024 * 1024),
     enableMarkdown: optionalBoolean("QQ_ENABLE_MARKDOWN", true),
-    codexEnableSearch: optionalBoolean("CODEX_ENABLE_SEARCH", false)
+    codexEnableSearch: optionalBoolean("CODEX_ENABLE_SEARCH", false),
+    codexMemoryDir,
+    codexMemoryFile: path.join(codexMemoryDir, "qqbot.md"),
+    memoryMaxChars: optionalNumber("MEMORY_MAX_CHARS", 4_000)
   };
+}
+
+function optionalText(name: string, fallback: string): string | undefined {
+  if (!(name in process.env)) return fallback;
+  const value = process.env[name] ?? "";
+  return value.trim() || undefined;
 }

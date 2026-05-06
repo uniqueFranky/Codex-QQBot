@@ -4,6 +4,9 @@ export interface BotState {
   threadId?: string;
   qqSessionId?: string;
   qqSeq?: number;
+  lastOpenid?: string;
+  injectMemoryOnNextRun?: boolean;
+  pendingMemoryDiff?: string;
 }
 
 export class StateStore {
@@ -27,11 +30,19 @@ export class StateStore {
     return next;
   }
 
+  appendMemoryDiff(diff: string): BotState {
+    const current = this.load();
+    const previous = current.pendingMemoryDiff?.trim();
+    current.pendingMemoryDiff = previous ? `${previous}\n${diff.trim()}` : diff.trim();
+    this.save(current);
+    return current;
+  }
+
   resetThread(): BotState {
     const current = this.load();
     delete current.threadId;
+    current.injectMemoryOnNextRun = true;
     this.save(current);
     return current;
   }
 }
-

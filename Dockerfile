@@ -44,7 +44,7 @@ ENV HTTP_PROXY=${HTTP_PROXY} \
   no_proxy=${NO_PROXY}
 
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends ca-certificates git ripgrep python3 make g++ \
+  && apt-get install -y --no-install-recommends ca-certificates cron git ripgrep python3 make g++ \
   && rm -rf /var/lib/apt/lists/* \
   && npm install -g @openai/codex
 
@@ -53,6 +53,7 @@ RUN npm ci --omit=dev
 
 COPY --from=build /app/dist ./dist
 COPY codex-config/config.toml /opt/codex-config/config.toml
+COPY codex-skills ./codex-skills
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 
 ENV NODE_ENV=production \
@@ -62,7 +63,10 @@ ENV NODE_ENV=production \
   CODEX_SANDBOX_MODE=danger-full-access
 
 RUN mkdir -p /workspace /data /codex-home /opt/codex-config \
-  && chmod +x /usr/local/bin/docker-entrypoint.sh
+  && chmod +x /usr/local/bin/docker-entrypoint.sh \
+  && printf '#!/bin/sh\nexec node /app/dist/memory-cli.js "$@"\n' > /usr/local/bin/qq-memory \
+  && printf '#!/bin/sh\nexec node /app/dist/qq-notify-cli.js "$@"\n' > /usr/local/bin/qq-notify \
+  && chmod +x /usr/local/bin/qq-memory /usr/local/bin/qq-notify
 
 ENTRYPOINT ["docker-entrypoint.sh"]
 CMD ["node", "dist/index.js"]

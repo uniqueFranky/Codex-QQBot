@@ -9,6 +9,7 @@ export interface CodexRunOptions {
   prompt: string;
   threadId?: string;
   imagePaths?: string[];
+  systemPrompt?: string;
   onThreadStarted?: (threadId: string) => void;
   onStatus?: (status: string) => void | Promise<void>;
   onMessageDelta?: (text: string) => void | Promise<void>;
@@ -55,7 +56,12 @@ export class CodexRunner {
 
     const logFile = path.join(this.config.logsDir, `codex-${Date.now()}.jsonl`);
     const logStream = createWriteStream(logFile, { flags: "a" });
-    const args = this.buildArgs(options.prompt, options.threadId, options.imagePaths ?? []);
+    const args = this.buildArgs(
+      options.prompt,
+      options.threadId,
+      options.imagePaths ?? [],
+      options.systemPrompt
+    );
 
     const child = spawn("codex", args, {
       cwd: this.config.workspaceDir,
@@ -137,7 +143,12 @@ export class CodexRunner {
     }
   }
 
-  private buildArgs(prompt: string, threadId?: string, imagePaths: string[] = []): string[] {
+  private buildArgs(
+    prompt: string,
+    threadId?: string,
+    imagePaths: string[] = [],
+    systemPrompt = ""
+  ): string[] {
     const base = ["-C", this.config.workspaceDir];
 
     if (this.config.codexModel) {
@@ -157,7 +168,10 @@ export class CodexRunner {
 
     base.push("exec");
 
-    const fullPrompt = `${WORKSPACE_RULES}\n\n用户消息：\n${prompt}`;
+    const systemPromptBlock = systemPrompt.trim()
+      ? `\n\n本轮新会话的一次性系统提示：\n${systemPrompt.trim()}`
+      : "";
+    const fullPrompt = `${WORKSPACE_RULES}${systemPromptBlock}\n\n用户消息：\n${prompt}`;
 
     if (threadId) {
       return [
