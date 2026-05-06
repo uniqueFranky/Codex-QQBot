@@ -22,6 +22,13 @@ export interface CodexRunResult {
   timedOut: boolean;
 }
 
+interface ActiveRun {
+  child: ChildProcess;
+  interrupted: boolean;
+  timedOut: boolean;
+  closed: boolean;
+}
+
 const WORKSPACE_RULES = `你正在通过 QQ 与用户交互。
 当前工作目录是 workspace。允许读取外部信息和联网搜索。
 项目相关的创建、修改、删除、安装依赖产生的写入、缓存写入、生成文件都应发生在当前 workspace 内。
@@ -30,29 +37,26 @@ const WORKSPACE_RULES = `你正在通过 QQ 与用户交互。
 状态说明保持简短，最终回答适合在 QQ 中阅读。`;
 
 export class CodexRunner {
-  private child?: ChildProcess;
-  private interrupted = false;
-  private timedOut = false;
+  private activeRun?: ActiveRun;
 
   constructor(private readonly config: Config) {}
 
   isRunning(): boolean {
-    return Boolean(this.child);
+    return Boolean(this.activeRun && !this.activeRun.closed);
   }
 
   stop(): void {
-    if (!this.child) return;
-    this.interrupted = true;
-    this.child.kill("SIGTERM");
+    const run = this.activeRun;
+    if (!run || run.closed) return;
+    run.interrupted = true;
+    run.child.kill("SIGTERM");
     setTimeout(() => {
-      if (this.child && !this.child.killed) this.child.kill("SIGKILL");
+      if (!run.closed) run.child.kill("SIGKILL");
     }, 2000);
   }
 
   async run(options: CodexRunOptions): Promise<CodexRunResult> {
-    if (this.child) this.stop();
-    this.interrupted = false;
-    this.timedOut = false;
+    if (this.activeRun && !this.activeRun.closed) this.stop();
 
     const logFile = path.join(this.config.logsDir, `codex-${Date.now()}.jsonl`);
     const logStream = createWriteStream(logFile, { flags: "a" });
@@ -71,15 +75,21 @@ export class CodexRunner {
       },
       stdio: ["ignore", "pipe", "pipe"]
     });
-    this.child = child;
+    const run: ActiveRun = {
+      child,
+      interrupted: false,
+      timedOut: false,
+      closed: false
+    };
+    this.activeRun = run;
 
     let threadId = options.threadId;
     let finalText = "";
     let lastAgentText = "";
 
     const timeout = setTimeout(() => {
-      this.interrupted = true;
-      this.timedOut = true;
+      run.interrupted = true;
+      run.timedOut = true;
       child.kill("SIGTERM");
     }, this.config.codexTimeoutMs);
 
@@ -126,10 +136,11 @@ export class CodexRunner {
       clearTimeout(timeout);
       stdout.close();
       logStream.end();
-      this.child = undefined;
+      run.closed = true;
+      if (this.activeRun === run) this.activeRun = undefined;
 
-      if (this.interrupted) {
-        return { threadId, finalText, interrupted: true, timedOut: this.timedOut };
+      if (run.interrupted) {
+        return { threadId, finalText, interrupted: true, timedOut: run.timedOut };
       }
       if (exitCode !== 0) {
         throw new Error(`Codex exited with code ${exitCode}. Log: ${logFile}`);
@@ -137,7 +148,8 @@ export class CodexRunner {
       return { threadId, finalText, interrupted: false, timedOut: false };
     } catch (error) {
       clearTimeout(timeout);
-      this.child = undefined;
+      run.closed = true;
+      if (this.activeRun === run) this.activeRun = undefined;
       logStream.end();
       throw error;
     }

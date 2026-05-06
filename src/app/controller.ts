@@ -229,10 +229,12 @@ export class BotController {
           });
         },
         onStatus: async (status) => {
+          if (currentRun !== this.runId) return;
           if (!this.shouldSendStatus(status)) return;
           await this.messages.sendText(message, status);
         },
         onMessageDelta: (delta) => {
+          if (currentRun !== this.runId) return;
           buffered += delta;
           if (buffered.length >= this.config.replyChunkSize) {
             void flush().catch((error) => console.error("flush message failed", error));
@@ -243,6 +245,7 @@ export class BotController {
       });
 
       if (flushTimer) clearTimeout(flushTimer);
+      if (currentRun !== this.runId) return;
       await flush();
 
       if (result.threadId) {
@@ -263,6 +266,7 @@ export class BotController {
       await this.sendOutputImages(message, startedAtMs);
     } catch (error) {
       if (flushTimer) clearTimeout(flushTimer);
+      if (currentRun !== this.runId) return;
       const detail = error instanceof Error ? error.message : String(error);
       await this.messages.sendText(message, `Codex 执行失败：${detail}`);
     }
