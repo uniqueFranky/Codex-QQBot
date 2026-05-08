@@ -12,7 +12,7 @@
 - 不做 openid 白名单过滤，任何单聊发送者都可以使用。
 - `/new` 之前共享同一个 Codex 会话。
 - 支持给 Codex 会话命名、创建、恢复和删除命名；删除命名不会删除 Codex 实际 session 记录。
-- 如果 Codex 正在执行任务，新的普通消息会立即中止当前任务，并把新消息作为纠偏继续执行。
+- 如果 Codex 正在执行任务，新的普通消息会加入队列；需要立即纠偏时使用 `/interrupt <消息>`。
 - 支持接收 QQ 单聊图片，下载到 `workspace/qq-images` 后传给 Codex。
 - 支持发送 Codex 在 `workspace` 中新生成或修改的图片文件。
 - 支持用 QQ Markdown 消息发送 Codex 的回答；发送失败会自动回退为普通文本。
@@ -26,11 +26,16 @@
 
 ```text
 /new      重置 Codex 会话，不清空 workspace 文件
-/stop     中止当前 Codex 进程
+/stop     中止当前 Codex 任务
+/stop <pid> 结束指定后台进程
+/ps       查看容器内后台进程
 /status   查看当前是否空闲或正在执行
 /run      让 Codex 运行一条 bash 命令
 /memory   查看和管理容器内 Codex 记忆
 /session  查看和管理命名 Codex 会话
+/model    查看或切换 Codex 模型
+/queue    查看和管理待处理消息队列
+/interrupt 中断当前 Codex 任务并立即处理纠偏消息
 ```
 
 `/run` 示例：
@@ -41,6 +46,21 @@
 ```
 
 `/run` 不由 QQBot 直接执行命令，而是交给容器内 Codex CLI 执行并汇报结果，因此仍会走现有的中断、状态、超时和日志机制。
+
+`/ps` 会列出容器内可管理的后台进程，包含 PID、父 PID、状态、运行时长和命令。`/stop <pid>` 会向指定进程发送 `SIGTERM`；不带 PID 的 `/stop` 仍然只中止当前 Codex 任务。
+
+`/queue` 支持的命令：
+
+```text
+/queue list             查看消息队列
+/queue add <message>    把消息加入队列
+/queue jump <message>   把消息插入队首，优先处理
+/queue popback          删除最后加入的消息
+/queue clear            清空队列
+/interrupt <message>    中断当前任务并立即处理纠偏消息
+```
+
+当 Codex 正在运行时，普通文本消息会自动加入队列，不会打断当前任务。当前任务完成且队列非空时，bot 会发送任务完成提示，展示当前消息队列和下一条即将处理的消息，然后按先进先出的顺序依次发送队列消息给 Codex。`/queue jump <message>` 会把消息插入队首，优先于现有队列处理。`/interrupt <message>` 会打断当前任务并立即执行该消息，已有队列保持不变；纠偏消息完成后再继续处理队列。队列为空时，bot 只会发送没有后续任务的提示。
 
 `/session` 支持的命令：
 
@@ -62,12 +82,23 @@
 
 命名 session 只保存在 `data/state.json` 中，用来记录名称到 Codex `threadId` 的映射。`/session rm <name>` 只删除这个映射，不会删除 `codex-home` 中的 Codex 实际 session 文件。`/new` 仍然可用，会清空当前 `threadId` 和当前 session 名称，但不会删除已命名 session 列表。
 
+`/model` 支持的命令：
+
+```text
+/model                 查看当前模型
+/model <model>         切换后续 Codex 任务使用的模型
+/model reset           恢复 `.env` 中的 CODEX_MODEL 或 Codex CLI 默认模型
+```
+
+`/model <model>` 会把选择保存到 `data/state.json`，重启容器后仍会生效。它不会修改 `.env` 或 `codex-home/config.toml`。
+
 ## 目录结构
 
 ```text
 .
 ├── codex-config/config.toml  # 构建进镜像的默认 Codex 配置
 ├── codex-home/               # 容器 Codex 的持久化 HOME，git 忽略
+├── cron.d/                   # 容器 /etc/cron.d，git 忽略
 ├── data/                     # bot 状态和日志，git 忽略
 ├── workspace/                # Codex 工作目录，git 忽略
 ├── Dockerfile
@@ -81,6 +112,7 @@ Docker 挂载关系：
 ./workspace  -> /workspace
 ./data       -> /data
 ./codex-home -> /codex-home
+./cron.d     -> /etc/cron.d
 ```
 
 不要挂载宿主机敏感路径，例如 `/`、`~/.codex`、`~/.ssh`、`/var/run/docker.sock`。
@@ -117,7 +149,7 @@ V_API_BASE_URL=你的BASE URL
 如果宿主机代理不是 `127.0.0.1:18899`，修改 `.env` 中的代理配置：
 
 ```env
-HOST_PROXY_PORT=8899
+HOST_PROXY_PORT=18899
 HOST_HTTP_PROXY=
 HOST_HTTPS_PROXY=
 HOST_ALL_PROXY=
@@ -127,6 +159,8 @@ HOST_NO_PROXY=localhost,127.0.0.1,::1
 默认会用 `HOST_PROXY_PORT` 生成 `http://host.docker.internal:<port>`。如果你的代理需要完整 URL，可以填写 `HOST_HTTP_PROXY`、`HOST_HTTPS_PROXY`、`HOST_ALL_PROXY` 覆盖默认值。
 
 注意：容器里访问宿主机代理要用 `host.docker.internal`，不要用 `127.0.0.1`。容器内的 `127.0.0.1` 指向容器自己。
+
+构建镜像和运行容器时都以当前目录 `.env` 为准，不让宿主机 shell 中同名环境变量覆盖 `.env`。构建阶段通过 Docker BuildKit secret 读取 `.env`，只用于当次 `RUN` 命令设置代理，不会把 `.env` 复制进最终镜像。
 
 图片相关限制可以通过 `.env` 调整：
 
@@ -172,6 +206,20 @@ RECEIVED_MESSAGE=已收到，Codex 正在处理。
 
 ```env
 RECEIVED_MESSAGE=
+```
+
+Codex 正常完成当前任务后的提示文案，以及队列为空时的提示文案：
+
+```env
+TASK_COMPLETE_MESSAGE=当前任务已完成。
+QUEUE_EMPTY_MESSAGE=队列为空，暂无后续任务。
+```
+
+任意一项设为空时，对应提示不会发送：
+
+```env
+TASK_COMPLETE_MESSAGE=
+QUEUE_EMPTY_MESSAGE=
 ```
 
 单个 QQBot 记忆文件长度提醒阈值：
@@ -346,7 +394,7 @@ QQ_NOTIFY_OPENID=<openid> qq-notify "消息内容"
 
 这个 skill 只用于创建通知或定时提醒，例如“完成后通知我一声”“每天早上 8 点提醒我该起床了”。普通问答、任务结果、状态更新和一般性回复不应调用 `qq-notify`。
 
-容器会启动 cron。Codex 可以创建 `/etc/cron.d/*` 文件来定时调用 `qq-notify`，例如：
+容器会启动 cron。项目的 `./cron.d` 会挂载到容器内 `/etc/cron.d`，因此定时任务会在容器重建后保留。Codex 可以创建 `/etc/cron.d/*` 文件来定时调用 `qq-notify`，例如：
 
 ```cron
 SHELL=/bin/sh
@@ -377,7 +425,7 @@ QQ_API_BASE=https://api.sgroup.qq.com
 QQBOT_RUNTIME_ENV_FILE=/path/to/qqbot.env
 ```
 
-写在容器内部 `/etc/cron.d` 的任务在容器重建后可能需要重新创建。
+`docker-entrypoint.sh` 会在启动 cron 前把 `/etc/cron.d/*` 中的普通文件权限规整为 `root:root` 和 `0644`。cron 文件名建议只使用字母、数字、下划线和短横线，不要包含点号。
 
 记忆文件使用 key-value Markdown 格式：
 
@@ -482,7 +530,7 @@ npm run dev
 
 - QQBot 使用 QQ 官方 OpenAPI 和 WebSocket Gateway。
 - QQ 机器人后台需要开启单聊消息事件权限。
-- `.env`、`data/`、`workspace/`、`codex-home/`、`dist/`、`node_modules/` 已被 git 忽略。
+- `.env`、`data/`、`workspace/`、`codex-home/`、`cron.d/`、`dist/`、`node_modules/` 已被 git 忽略。
 
 ## 许可证
 

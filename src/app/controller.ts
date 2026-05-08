@@ -1,3 +1,5 @@
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import type { StateStore } from "../state.js";
 import type { QQMessages } from "../qq/messages.js";
 import type { QQPrivateMessage } from "../qq/gateway.js";
@@ -6,10 +8,13 @@ import type { Config } from "../config.js";
 import type { MemoryTool } from "../memory-tool.js";
 import { findNewOutputImages, saveInputImages } from "./images.js";
 
+const execFileAsync = promisify(execFile);
+
 export class BotController {
   private lastStatusAt = 0;
   private lastStatus = "";
   private runId = 0;
+  private processingQueue = false;
 
   constructor(
     private readonly config: Config,
@@ -38,7 +43,13 @@ export class BotController {
       return;
     }
 
-    if (text === "/stop") {
+    if (text === "/stop" || text.startsWith("/stop ")) {
+      const pid = text.slice("/stop".length).trim();
+      if (pid) {
+        await this.handleStopProcessCommand(message, pid);
+        return;
+      }
+
       if (this.codex.isRunning()) {
         this.codex.stop();
         await this.messages.sendText(message, "已中止当前任务。");
@@ -48,15 +59,32 @@ export class BotController {
       return;
     }
 
+    if (text === "/ps") {
+      await this.handlePsCommand(message);
+      return;
+    }
+
     if (text === "/status") {
       const state = this.stateStore.load();
       const session = state.currentSessionName ? `，session: ${state.currentSessionName}` : "";
+      const model = `，model: ${displayModel(state, this.config)}`;
+      const queue = `，queue: ${state.messageQueue?.length ?? 0}`;
       await this.messages.sendText(
         message,
         this.codex.isRunning()
-          ? `正在运行。threadId: ${state.threadId ?? "未建立"}${session}`
-          : `空闲。threadId: ${state.threadId ?? "未建立"}${session}`
+          ? `正在运行。threadId: ${state.threadId ?? "未建立"}${session}${model}${queue}`
+          : `空闲。threadId: ${state.threadId ?? "未建立"}${session}${model}${queue}`
       );
+      return;
+    }
+
+    if (text === "/queue" || text.startsWith("/queue ")) {
+      await this.handleQueueCommand(message, text);
+      return;
+    }
+
+    if (text === "/interrupt" || text.startsWith("/interrupt ")) {
+      await this.handleInterruptCommand(message, text);
       return;
     }
 
@@ -72,6 +100,21 @@ export class BotController {
 
     if (text === "/session" || text.startsWith("/session ")) {
       await this.handleSessionCommand(message, text);
+      return;
+    }
+
+    if (text === "/model" || text.startsWith("/model ")) {
+      await this.handleModelCommand(message, text);
+      return;
+    }
+
+    if (this.codex.isRunning()) {
+      if (!text) {
+        await this.messages.sendText(message, "当前 Codex 正在运行。图片消息不能入队，请稍后重发。");
+        return;
+      }
+      const length = this.enqueueMessage(text);
+      await this.messages.sendText(message, `当前 Codex 正在运行，已加入队列。队列长度：${length}`);
       return;
     }
 
@@ -96,6 +139,191 @@ export class BotController {
         "```"
       ].join("\n")
     );
+  }
+
+  private async handleQueueCommand(message: QQPrivateMessage, text: string): Promise<void> {
+    const rest = text.slice("/queue".length).trim();
+    if (!rest || rest === "list") {
+      await this.showQueue(message);
+      return;
+    }
+
+    if (rest.startsWith("add ")) {
+      const queuedMessage = rest.slice(4).trim();
+      if (!queuedMessage) {
+        await this.messages.sendText(message, "用法：/queue add <消息>");
+        return;
+      }
+      const length = this.enqueueMessage(queuedMessage);
+      await this.messages.sendText(message, `已加入队列。队列长度：${length}`);
+      return;
+    }
+
+    if (rest.startsWith("jump ")) {
+      const queuedMessage = rest.slice(5).trim();
+      if (!queuedMessage) {
+        await this.messages.sendText(message, "用法：/queue jump <消息>");
+        return;
+      }
+      const length = this.enqueueMessageAtFront(queuedMessage);
+      await this.messages.sendText(message, `已插入队首。队列长度：${length}`);
+      return;
+    }
+
+    if (rest === "popback") {
+      const state = this.stateStore.load();
+      const queue = [...(state.messageQueue ?? [])];
+      const removed = queue.pop();
+      this.stateStore.patch({ messageQueue: queue });
+      await this.messages.sendText(
+        message,
+        removed ? `已删除最后一条队列消息：${removed}` : "队列为空。"
+      );
+      return;
+    }
+
+    if (rest === "clear") {
+      this.stateStore.patch({ messageQueue: [] });
+      await this.messages.sendText(message, "已清空队列。");
+      return;
+    }
+
+    await this.messages.sendText(message, queueUsage());
+  }
+
+  private async handleInterruptCommand(message: QQPrivateMessage, text: string): Promise<void> {
+    const prompt = text.slice("/interrupt".length).trim();
+    if (!prompt) {
+      await this.messages.sendText(message, "用法：/interrupt <纠偏消息>");
+      return;
+    }
+
+    if (this.codex.isRunning()) {
+      this.codex.stop();
+      await this.messages.sendText(message, "已中断当前 Codex 任务，开始处理纠偏消息。");
+    }
+    await this.startCodexTask(message, prompt);
+  }
+
+  private async showQueue(message: QQPrivateMessage): Promise<void> {
+    const queue = this.stateStore.load().messageQueue ?? [];
+    if (queue.length === 0) {
+      await this.messages.sendText(message, `队列为空。\n${queueUsage()}`);
+      return;
+    }
+
+    const lines = queue.map((queuedMessage, index) => `${index + 1}. ${queuedMessage}`);
+    await this.messages.sendMarkdown(message, ["当前队列：", "", ...lines].join("\n"));
+  }
+
+  private enqueueMessage(message: string): number {
+    const state = this.stateStore.load();
+    const queue = [...(state.messageQueue ?? []), message];
+    this.stateStore.patch({ messageQueue: queue });
+    return queue.length;
+  }
+
+  private enqueueMessageAtFront(message: string): number {
+    const state = this.stateStore.load();
+    const queue = [message, ...(state.messageQueue ?? [])];
+    this.stateStore.patch({ messageQueue: queue });
+    return queue.length;
+  }
+
+  private popQueuedMessage(): string | undefined {
+    const state = this.stateStore.load();
+    const queue = [...(state.messageQueue ?? [])];
+    const next = queue.shift();
+    this.stateStore.patch({ messageQueue: queue });
+    return next;
+  }
+
+  private async processQueue(context: QQPrivateMessage): Promise<void> {
+    if (this.processingQueue || this.codex.isRunning()) return;
+    this.processingQueue = true;
+    try {
+      while (!this.codex.isRunning()) {
+        const queuedMessage = this.popQueuedMessage();
+        if (!queuedMessage) return;
+        const remaining = this.stateStore.load().messageQueue?.length ?? 0;
+        await this.messages.sendText(context, `开始处理队列消息。剩余：${remaining}`);
+        await this.startCodexTask(context, queuedMessage, { drainQueue: false });
+      }
+    } finally {
+      this.processingQueue = false;
+    }
+  }
+
+  private async handlePsCommand(message: QQPrivateMessage): Promise<void> {
+    try {
+      const processes = await listProcesses();
+      if (processes.length === 0) {
+        await this.messages.sendText(message, "没有发现可管理的后台进程。");
+        return;
+      }
+
+      const lines = processes.slice(0, 20).map((processInfo) =>
+        [
+          `PID ${processInfo.pid}`,
+          `PPID ${processInfo.ppid}`,
+          processInfo.stat,
+          processInfo.etime,
+          truncate(processInfo.args || processInfo.command, 120)
+        ].join(" | ")
+      );
+      const suffix = processes.length > lines.length ? `\n... 还有 ${processes.length - lines.length} 个进程` : "";
+      await this.messages.sendMarkdown(
+        message,
+        ["后台进程：", "", "```text", ...lines, "```", "", "用 /stop <pid> 结束指定进程。"].join(
+          "\n"
+        ) + suffix
+      );
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      await this.messages.sendText(message, `查看进程失败：${detail}`);
+    }
+  }
+
+  private async handleStopProcessCommand(message: QQPrivateMessage, input: string): Promise<void> {
+    const pid = Number(input);
+    if (!Number.isInteger(pid) || pid <= 1) {
+      await this.messages.sendText(message, "用法：/stop <pid>。不能结束 PID 1。");
+      return;
+    }
+
+    try {
+      process.kill(pid, "SIGTERM");
+      await this.messages.sendText(message, `已向 PID ${pid} 发送 SIGTERM。`);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      await this.messages.sendText(message, `结束进程失败：${detail}`);
+    }
+  }
+
+  private async handleModelCommand(message: QQPrivateMessage, text: string): Promise<void> {
+    const model = text.slice("/model".length).trim();
+    if (!model || model === "show" || model === "current") {
+      const state = this.stateStore.load();
+      await this.messages.sendText(message, `当前模型：${displayModel(state, this.config)}`);
+      return;
+    }
+
+    if (model === "reset" || model === "default") {
+      this.stateStore.patch({ codexModel: undefined });
+      await this.messages.sendText(
+        message,
+        `已恢复默认模型：${this.config.codexModel ?? "Codex CLI 默认模型"}`
+      );
+      return;
+    }
+
+    if (/\s/.test(model)) {
+      await this.messages.sendText(message, "模型名称不能包含空白字符。用法：/model <model>");
+      return;
+    }
+
+    this.stateStore.patch({ codexModel: model });
+    await this.messages.sendText(message, `已切换模型：${model}。下一次 Codex 任务生效。`);
   }
 
   private async handleMemoryCommand(message: QQPrivateMessage, text: string): Promise<void> {
@@ -372,7 +600,11 @@ export class BotController {
     );
   }
 
-  private async startCodexTask(message: QQPrivateMessage, text: string): Promise<void> {
+  private async startCodexTask(
+    message: QQPrivateMessage,
+    text: string,
+    options: { drainQueue?: boolean } = {}
+  ): Promise<void> {
     const currentRun = ++this.runId;
     if (this.codex.isRunning()) {
       this.codex.stop();
@@ -414,6 +646,7 @@ export class BotController {
         threadId: state.threadId,
         imagePaths,
         systemPrompt: buildMemorySystemPrompt(memory, memoryDiff),
+        model: currentModel(state, this.config),
         onThreadStarted: (threadId) => {
           const currentState = this.stateStore.load();
           this.stateStore.patch({
@@ -454,6 +687,7 @@ export class BotController {
       }
       if (result.timedOut) {
         await this.messages.sendText(message, "Codex 执行超时，已中止当前任务。");
+        if (options.drainQueue !== false) await this.processQueue(message);
         return;
       }
       if (result.interrupted) return;
@@ -461,11 +695,14 @@ export class BotController {
         await this.messages.sendText(message, "Codex 已结束，但没有返回文本结果。");
       }
       await this.sendOutputImages(message, startedAtMs);
+      await this.sendTaskCompletionSummary(message);
+      if (options.drainQueue !== false) await this.processQueue(message);
     } catch (error) {
       if (flushTimer) clearTimeout(flushTimer);
       if (currentRun !== this.runId) return;
       const detail = error instanceof Error ? error.message : String(error);
       await this.messages.sendText(message, `Codex 执行失败：${detail}`);
+      if (options.drainQueue !== false) await this.processQueue(message);
     }
   }
 
@@ -492,6 +729,26 @@ export class BotController {
       }
     }
   }
+
+  private async sendTaskCompletionSummary(message: QQPrivateMessage): Promise<void> {
+    const queue = this.stateStore.load().messageQueue ?? [];
+    if (queue.length === 0) {
+      if (this.config.queueEmptyMessage) {
+        await this.messages.sendText(message, this.config.queueEmptyMessage);
+      }
+      return;
+    }
+
+    if (this.config.taskCompleteMessage) {
+      await this.messages.sendText(message, this.config.taskCompleteMessage);
+    }
+
+    const lines = queue.map((queuedMessage, index) => `${index + 1}. ${queuedMessage}`);
+    await this.messages.sendMarkdown(
+      message,
+      ["当前队列：", "", ...lines, "", `下一条将处理：${queue[0]}`].join("\n")
+    );
+  }
 }
 
 function parseMemorySetInput(input: string): { key: string; value: string } | undefined {
@@ -515,6 +772,14 @@ function buildMemorySystemPrompt(memory: string, memoryDiff: string): string | u
   if (memory) parts.push(`以下是当前用户记忆：\n${memory}`);
   if (memoryDiff) parts.push(`以下是上次注入后发生的记忆变更 diff：\n${memoryDiff}`);
   return parts.length > 0 ? parts.join("\n\n") : undefined;
+}
+
+function currentModel(state: { codexModel?: string }, config: Config): string | undefined {
+  return state.codexModel?.trim() || config.codexModel;
+}
+
+function displayModel(state: { codexModel?: string }, config: Config): string {
+  return currentModel(state, config) ?? "Codex CLI 默认模型";
 }
 
 interface SessionNameResult {
@@ -572,4 +837,63 @@ function sessionUsage(): string {
     "/session rm <名字>",
     "切换时若当前 session 未命名，可追加 --discard 明确丢弃。"
   ].join("\n");
+}
+
+function queueUsage(): string {
+  return [
+    "用法：",
+    "/queue list",
+    "/queue add <消息>",
+    "/queue jump <消息>",
+    "/queue popback",
+    "/queue clear",
+    "/interrupt <纠偏消息>"
+  ].join("\n");
+}
+
+interface ProcessInfo {
+  pid: number;
+  ppid: number;
+  stat: string;
+  etime: string;
+  command: string;
+  args: string;
+}
+
+async function listProcesses(): Promise<ProcessInfo[]> {
+  const { stdout } = await execFileAsync("ps", [
+    "-eo",
+    "pid=,ppid=,stat=,etime=,comm=,args="
+  ]);
+
+  return stdout
+    .split(/\r?\n/)
+    .map(parseProcessLine)
+    .filter((processInfo): processInfo is ProcessInfo => Boolean(processInfo))
+    .filter(isManageableProcess)
+    .sort((left, right) => left.pid - right.pid);
+}
+
+function parseProcessLine(line: string): ProcessInfo | undefined {
+  const match = line.trim().match(/^(\d+)\s+(\d+)\s+(\S+)\s+(\S+)\s+(\S+)\s+([\s\S]*)$/);
+  if (!match) return undefined;
+  return {
+    pid: Number(match[1]),
+    ppid: Number(match[2]),
+    stat: match[3],
+    etime: match[4],
+    command: match[5],
+    args: match[6].trim()
+  };
+}
+
+function isManageableProcess(processInfo: ProcessInfo): boolean {
+  if (processInfo.pid <= 1 || processInfo.pid === process.pid) return false;
+  if (["ps", "cron"].includes(processInfo.command)) return false;
+  if (processInfo.args.includes("/app/dist/index.js")) return false;
+  return true;
+}
+
+function truncate(text: string, maxLength: number): string {
+  return text.length <= maxLength ? text : `${text.slice(0, maxLength - 3)}...`;
 }

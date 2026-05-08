@@ -1,26 +1,40 @@
+# syntax=docker/dockerfile:1.7
+
 FROM node:22-bookworm-slim AS build
 
 WORKDIR /app
 
-ARG HTTP_PROXY
-ARG HTTPS_PROXY
-ARG ALL_PROXY
-ARG NO_PROXY
-ENV HTTP_PROXY=${HTTP_PROXY} \
-  HTTPS_PROXY=${HTTPS_PROXY} \
-  ALL_PROXY=${ALL_PROXY} \
-  NO_PROXY=${NO_PROXY} \
-  http_proxy=${HTTP_PROXY} \
-  https_proxy=${HTTPS_PROXY} \
-  all_proxy=${ALL_PROXY} \
-  no_proxy=${NO_PROXY}
-
-RUN apt-get update \
+RUN --mount=type=secret,id=dotenv,required=false \
+  set -e; \
+  unset HTTP_PROXY HTTPS_PROXY ALL_PROXY NO_PROXY http_proxy https_proxy all_proxy no_proxy; \
+  if [ -f /run/secrets/dotenv ]; then set -a; . /run/secrets/dotenv; set +a; fi; \
+  DEFAULT_PROXY="http://host.docker.internal:${HOST_PROXY_PORT:-18899}"; \
+  export HTTP_PROXY="${HOST_HTTP_PROXY:-$DEFAULT_PROXY}" \
+    HTTPS_PROXY="${HOST_HTTPS_PROXY:-$DEFAULT_PROXY}" \
+    ALL_PROXY="${HOST_ALL_PROXY:-$DEFAULT_PROXY}" \
+    NO_PROXY="${HOST_NO_PROXY:-localhost,127.0.0.1,::1}" \
+    http_proxy="${HOST_HTTP_PROXY:-$DEFAULT_PROXY}" \
+    https_proxy="${HOST_HTTPS_PROXY:-$DEFAULT_PROXY}" \
+    all_proxy="${HOST_ALL_PROXY:-$DEFAULT_PROXY}" \
+    no_proxy="${HOST_NO_PROXY:-localhost,127.0.0.1,::1}"; \
+  apt-get update \
   && apt-get install -y --no-install-recommends ca-certificates git ripgrep python3 make g++ \
   && rm -rf /var/lib/apt/lists/*
 
 COPY package.json package-lock.json ./
-RUN npm ci
+RUN --mount=type=secret,id=dotenv,required=false \
+  unset HTTP_PROXY HTTPS_PROXY ALL_PROXY NO_PROXY http_proxy https_proxy all_proxy no_proxy; \
+  if [ -f /run/secrets/dotenv ]; then set -a; . /run/secrets/dotenv; set +a; fi; \
+  DEFAULT_PROXY="http://host.docker.internal:${HOST_PROXY_PORT:-18899}"; \
+  export HTTP_PROXY="${HOST_HTTP_PROXY:-$DEFAULT_PROXY}" \
+    HTTPS_PROXY="${HOST_HTTPS_PROXY:-$DEFAULT_PROXY}" \
+    ALL_PROXY="${HOST_ALL_PROXY:-$DEFAULT_PROXY}" \
+    NO_PROXY="${HOST_NO_PROXY:-localhost,127.0.0.1,::1}" \
+    http_proxy="${HOST_HTTP_PROXY:-$DEFAULT_PROXY}" \
+    https_proxy="${HOST_HTTPS_PROXY:-$DEFAULT_PROXY}" \
+    all_proxy="${HOST_ALL_PROXY:-$DEFAULT_PROXY}" \
+    no_proxy="${HOST_NO_PROXY:-localhost,127.0.0.1,::1}"; \
+  npm ci
 
 COPY tsconfig.json ./
 COPY src ./src
@@ -30,26 +44,87 @@ FROM node:22-bookworm-slim AS runtime
 
 WORKDIR /app
 
-ARG HTTP_PROXY
-ARG HTTPS_PROXY
-ARG ALL_PROXY
-ARG NO_PROXY
-ENV HTTP_PROXY=${HTTP_PROXY} \
-  HTTPS_PROXY=${HTTPS_PROXY} \
-  ALL_PROXY=${ALL_PROXY} \
-  NO_PROXY=${NO_PROXY} \
-  http_proxy=${HTTP_PROXY} \
-  https_proxy=${HTTPS_PROXY} \
-  all_proxy=${ALL_PROXY} \
-  no_proxy=${NO_PROXY}
+ARG TARGETARCH
 
-RUN apt-get update \
-  && apt-get install -y --no-install-recommends ca-certificates cron git ripgrep python3 make g++ \
-  && rm -rf /var/lib/apt/lists/* \
-  && npm install -g @openai/codex
+RUN --mount=type=secret,id=dotenv,required=false \
+  unset HTTP_PROXY HTTPS_PROXY ALL_PROXY NO_PROXY http_proxy https_proxy all_proxy no_proxy; \
+  if [ -f /run/secrets/dotenv ]; then set -a; . /run/secrets/dotenv; set +a; fi; \
+  DEFAULT_PROXY="http://host.docker.internal:${HOST_PROXY_PORT:-18899}"; \
+  export HTTP_PROXY="${HOST_HTTP_PROXY:-$DEFAULT_PROXY}" \
+    HTTPS_PROXY="${HOST_HTTPS_PROXY:-$DEFAULT_PROXY}" \
+    ALL_PROXY="${HOST_ALL_PROXY:-$DEFAULT_PROXY}" \
+    NO_PROXY="${HOST_NO_PROXY:-localhost,127.0.0.1,::1}" \
+    http_proxy="${HOST_HTTP_PROXY:-$DEFAULT_PROXY}" \
+    https_proxy="${HOST_HTTPS_PROXY:-$DEFAULT_PROXY}" \
+    all_proxy="${HOST_ALL_PROXY:-$DEFAULT_PROXY}" \
+    no_proxy="${HOST_NO_PROXY:-localhost,127.0.0.1,::1}"; \
+  apt-get update \
+  && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    cron \
+    curl \
+    dnsutils \
+    file \
+    g++ \
+    git \
+    iproute2 \
+    iputils-ping \
+    jq \
+    less \
+    lsof \
+    make \
+    nano \
+    netcat-openbsd \
+    openssh-client \
+    pkg-config \
+    procps \
+    ripgrep \
+    rsync \
+    sqlite3 \
+    tree \
+    unzip \
+    vim-tiny \
+    wget \
+    zip \
+  && rm -rf /var/lib/apt/lists/*
+
+RUN --mount=type=secret,id=dotenv,required=false \
+  unset HTTP_PROXY HTTPS_PROXY ALL_PROXY NO_PROXY http_proxy https_proxy all_proxy no_proxy; \
+  if [ -f /run/secrets/dotenv ]; then set -a; . /run/secrets/dotenv; set +a; fi; \
+  DEFAULT_PROXY="http://host.docker.internal:${HOST_PROXY_PORT:-18899}"; \
+  export HTTP_PROXY="${HOST_HTTP_PROXY:-$DEFAULT_PROXY}" \
+    HTTPS_PROXY="${HOST_HTTPS_PROXY:-$DEFAULT_PROXY}" \
+    ALL_PROXY="${HOST_ALL_PROXY:-$DEFAULT_PROXY}" \
+    NO_PROXY="${HOST_NO_PROXY:-localhost,127.0.0.1,::1}" \
+    http_proxy="${HOST_HTTP_PROXY:-$DEFAULT_PROXY}" \
+    https_proxy="${HOST_HTTPS_PROXY:-$DEFAULT_PROXY}" \
+    all_proxy="${HOST_ALL_PROXY:-$DEFAULT_PROXY}" \
+    no_proxy="${HOST_NO_PROXY:-localhost,127.0.0.1,::1}"; \
+  case "$TARGETARCH" in \
+    amd64) CODEX_PLATFORM="linux-x64" ;; \
+    arm64) CODEX_PLATFORM="linux-arm64" ;; \
+    *) echo "Unsupported Codex native package architecture: $TARGETARCH" >&2; exit 1 ;; \
+  esac; \
+  CODEX_VERSION="$(npm view @openai/codex version)"; \
+  npm install -g \
+    "@openai/codex@$CODEX_VERSION" \
+    "@openai/codex-$CODEX_PLATFORM@npm:@openai/codex@$CODEX_VERSION-$CODEX_PLATFORM"; \
+  codex --version
 
 COPY package.json package-lock.json ./
-RUN npm ci --omit=dev
+RUN --mount=type=secret,id=dotenv,required=false \
+  unset HTTP_PROXY HTTPS_PROXY ALL_PROXY NO_PROXY http_proxy https_proxy all_proxy no_proxy; \
+  if [ -f /run/secrets/dotenv ]; then set -a; . /run/secrets/dotenv; set +a; fi; \
+  DEFAULT_PROXY="http://host.docker.internal:${HOST_PROXY_PORT:-18899}"; \
+  export HTTP_PROXY="${HOST_HTTP_PROXY:-$DEFAULT_PROXY}" \
+    HTTPS_PROXY="${HOST_HTTPS_PROXY:-$DEFAULT_PROXY}" \
+    ALL_PROXY="${HOST_ALL_PROXY:-$DEFAULT_PROXY}" \
+    NO_PROXY="${HOST_NO_PROXY:-localhost,127.0.0.1,::1}" \
+    http_proxy="${HOST_HTTP_PROXY:-$DEFAULT_PROXY}" \
+    https_proxy="${HOST_HTTPS_PROXY:-$DEFAULT_PROXY}" \
+    all_proxy="${HOST_ALL_PROXY:-$DEFAULT_PROXY}" \
+    no_proxy="${HOST_NO_PROXY:-localhost,127.0.0.1,::1}"; \
+  npm ci --omit=dev
 
 COPY --from=build /app/dist ./dist
 COPY codex-config/config.toml /opt/codex-config/config.toml

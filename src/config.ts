@@ -16,6 +16,8 @@ export interface Config {
   codexSandboxMode: "workspace-write" | "danger-full-access";
   statusThrottleMs: number;
   receivedMessage?: string;
+  taskCompleteMessage?: string;
+  queueEmptyMessage?: string;
   replyChunkSize: number;
   maxInputImages: number;
   maxOutputImages: number;
@@ -48,7 +50,7 @@ function loadDotEnv(filePath: string): void {
     ) {
       value = value.slice(1, -1);
     }
-    if (!(key in process.env)) process.env[key] = value;
+    process.env[key] = value;
   }
 }
 
@@ -119,6 +121,8 @@ export function loadConfig(): Config {
     codexSandboxMode: optionalSandboxMode(),
     statusThrottleMs: optionalNumber("STATUS_THROTTLE_MS", 2_500),
     receivedMessage: optionalText("RECEIVED_MESSAGE", "已收到，Codex 正在处理。"),
+    taskCompleteMessage: optionalText("TASK_COMPLETE_MESSAGE", "当前任务已完成。"),
+    queueEmptyMessage: optionalText("QUEUE_EMPTY_MESSAGE", "队列为空，暂无后续任务。"),
     replyChunkSize: optionalNumber("REPLY_CHUNK_SIZE", 1_500),
     maxInputImages: optionalNumber("MAX_INPUT_IMAGES", 4),
     maxOutputImages: optionalNumber("MAX_OUTPUT_IMAGES", 4),

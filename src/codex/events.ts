@@ -19,8 +19,15 @@ export interface CodexItem {
   command?: string | string[];
   path?: string;
   files?: string[];
+  changes?: CodexFileChange[];
   name?: string;
   status?: string;
+  [key: string]: unknown;
+}
+
+export interface CodexFileChange {
+  path?: string;
+  kind?: string;
   [key: string]: unknown;
 }
 
@@ -53,10 +60,12 @@ export function describeStatus(event: CodexEvent): string | undefined {
   }
 
   if (item.type === "file_change") {
-    if (item.path) return `正在修改：${item.path}`;
+    const changes = describeFileChanges(item);
+    if (changes) return changes;
     if (Array.isArray(item.files) && item.files.length > 0) {
       return `正在修改：${item.files.slice(0, 3).join(", ")}`;
     }
+    if (item.path) return `正在修改：${item.path}`;
     return "正在修改文件";
   }
 
@@ -69,6 +78,28 @@ export function describeStatus(event: CodexEvent): string | undefined {
   }
 
   return undefined;
+}
+
+function describeFileChanges(item: CodexItem): string | undefined {
+  if (!Array.isArray(item.changes) || item.changes.length === 0) return undefined;
+
+  const parts = item.changes
+    .filter((change) => change && typeof change === "object" && typeof change.path === "string")
+    .slice(0, 4)
+    .map((change) => `${changeKindText(change.kind)}${change.path}`);
+  if (parts.length === 0) return undefined;
+
+  const remaining = item.changes.length - parts.length;
+  const suffix = remaining > 0 ? ` 等 ${item.changes.length} 个文件` : "";
+  return `正在修改文件：${parts.join("，")}${suffix}`;
+}
+
+function changeKindText(kind: string | undefined): string {
+  if (kind === "add") return "新增 ";
+  if (kind === "delete") return "删除 ";
+  if (kind === "rename") return "重命名 ";
+  if (kind === "update") return "更新 ";
+  return "";
 }
 
 export function isItemEvent(event: CodexEvent): event is CodexItemEvent {

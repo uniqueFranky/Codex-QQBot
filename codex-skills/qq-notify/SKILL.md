@@ -25,7 +25,7 @@ qq-notify --format markdown "**Reminder:** message"
 
 `--text` and `--plain-text` both send plain text. `--markdown` sends QQ Markdown and falls back to plain text if QQ Markdown is disabled or unavailable in the bot configuration. `QQ_NOTIFY_FORMAT=text|markdown` can be used as a default, but command-line flags take precedence.
 
-For scheduled reminders, create a cron file in `/etc/cron.d/`. The container starts cron automatically.
+For scheduled reminders, create a cron file in `/etc/cron.d/`. This path is mounted from the project `./cron.d` directory, so scheduled reminders survive container recreation. The container starts cron automatically.
 
 Example for "每天早上8点提醒我该起床了":
 
@@ -42,6 +42,8 @@ QQ_API_BASE=https://api.sgroup.qq.com
 EOF
 chmod 0644 /etc/cron.d/qq-wakeup
 ```
+
+Cron file names should use only letters, digits, underscores, and hyphens. Avoid dots in file names.
 
 Do not put QQ secrets in cron commands or cron files. `qq-notify` automatically loads runtime configuration from:
 

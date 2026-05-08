@@ -2,6 +2,7 @@
 set -eu
 
 mkdir -p "${CODEX_HOME:-/codex-home}" /workspace /data
+mkdir -p /etc/cron.d
 
 CODEX_CONFIG="${CODEX_HOME:-/codex-home}/config.toml"
 
@@ -40,9 +41,27 @@ else
   printf '\n[features]\nmemories = true\n' >> "$CODEX_CONFIG"
 fi
 
-if command -v cron >/dev/null 2>&1; then
-  service cron start >/dev/null 2>&1 || cron
-fi
+prepare_cron_dir() {
+  # Debian cron ignores files in /etc/cron.d unless they are root-owned and not writable.
+  for cron_file in /etc/cron.d/*; do
+    if [ -f "$cron_file" ]; then
+      chown root:root "$cron_file" 2>/dev/null || true
+      chmod 0644 "$cron_file" 2>/dev/null || true
+    fi
+  done
+}
+
+configure_runtime_proxy() {
+  default_proxy="http://host.docker.internal:${HOST_PROXY_PORT:-8899}"
+  export HTTP_PROXY="${HOST_HTTP_PROXY:-$default_proxy}"
+  export HTTPS_PROXY="${HOST_HTTPS_PROXY:-$default_proxy}"
+  export ALL_PROXY="${HOST_ALL_PROXY:-$default_proxy}"
+  export NO_PROXY="${HOST_NO_PROXY:-localhost,127.0.0.1,::1}"
+  export http_proxy="${HOST_HTTP_PROXY:-$default_proxy}"
+  export https_proxy="${HOST_HTTPS_PROXY:-$default_proxy}"
+  export all_proxy="${HOST_ALL_PROXY:-$default_proxy}"
+  export no_proxy="${HOST_NO_PROXY:-localhost,127.0.0.1,::1}"
+}
 
 ensure_bash_loads_codex_profile() {
   marker="# codex-qqbot: source persistent Codex profile"
@@ -69,8 +88,14 @@ load_profile() {
   fi
 }
 
+configure_runtime_proxy
 ensure_bash_loads_codex_profile
 load_profile /etc/profile
 load_profile /root/.profile
+
+prepare_cron_dir
+if command -v cron >/dev/null 2>&1; then
+  service cron start >/dev/null 2>&1 || cron
+fi
 
 exec "$@"

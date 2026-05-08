@@ -4,11 +4,8 @@ services:
       context: .
       extra_hosts:
         - host.docker.internal:host-gateway
-      args:
-        HTTP_PROXY: ${HOST_HTTP_PROXY:-http://host.docker.internal:${HOST_PROXY_PORT:-8899}}
-        HTTPS_PROXY: ${HOST_HTTPS_PROXY:-http://host.docker.internal:${HOST_PROXY_PORT:-8899}}
-        ALL_PROXY: ${HOST_ALL_PROXY:-http://host.docker.internal:${HOST_PROXY_PORT:-8899}}
-        NO_PROXY: ${HOST_NO_PROXY:-localhost,127.0.0.1,::1}
+      secrets:
+        - dotenv
     env_file:
       - .env
     environment:
@@ -16,20 +13,15 @@ services:
       DATA_DIR: /data
       CODEX_HOME: /codex-home
       CODEX_SANDBOX_MODE: danger-full-access
-      HTTP_PROXY: ${HOST_HTTP_PROXY:-http://host.docker.internal:${HOST_PROXY_PORT:-8899}}
-      HTTPS_PROXY: ${HOST_HTTPS_PROXY:-http://host.docker.internal:${HOST_PROXY_PORT:-8899}}
-      ALL_PROXY: ${HOST_ALL_PROXY:-http://host.docker.internal:${HOST_PROXY_PORT:-8899}}
-      NO_PROXY: ${HOST_NO_PROXY:-localhost,127.0.0.1,::1}
-      http_proxy: ${HOST_HTTP_PROXY:-http://host.docker.internal:${HOST_PROXY_PORT:-8899}}
-      https_proxy: ${HOST_HTTPS_PROXY:-http://host.docker.internal:${HOST_PROXY_PORT:-8899}}
-      all_proxy: ${HOST_ALL_PROXY:-http://host.docker.internal:${HOST_PROXY_PORT:-8899}}
-      no_proxy: ${HOST_NO_PROXY:-localhost,127.0.0.1,::1}
-      V_API_KEY: ${V_API_KEY:-}
-      V_API_BASE_URL: ${V_API_BASE_URL:-https://lanxiu.eu.cc/v1}
     extra_hosts:
       - host.docker.internal:host-gateway
     volumes:
       - ./workspace:/workspace
       - ./data:/data
       - ./codex-home:/codex-home
+      - ./cron.d:/etc/cron.d
     restart: unless-stopped
+
+secrets:
+  dotenv:
+    file: .env

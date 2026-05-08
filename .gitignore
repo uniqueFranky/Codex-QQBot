@@ -4,4 +4,5 @@ dist/
 data/
 workspace/
 codex-home/
+cron.d/
 *.log

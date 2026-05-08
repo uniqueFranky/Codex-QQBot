@@ -10,6 +10,7 @@ export interface CodexRunOptions {
   threadId?: string;
   imagePaths?: string[];
   systemPrompt?: string;
+  model?: string;
   onThreadStarted?: (threadId: string) => void;
   onStatus?: (status: string) => void | Promise<void>;
   onMessageDelta?: (text: string) => void | Promise<void>;
@@ -64,7 +65,8 @@ export class CodexRunner {
       options.prompt,
       options.threadId,
       options.imagePaths ?? [],
-      options.systemPrompt
+      options.systemPrompt,
+      options.model
     );
 
     const child = spawn("codex", args, {
@@ -159,12 +161,13 @@ export class CodexRunner {
     prompt: string,
     threadId?: string,
     imagePaths: string[] = [],
-    systemPrompt = ""
+    systemPrompt = "",
+    model?: string
   ): string[] {
     const base = ["-C", this.config.workspaceDir];
 
-    if (this.config.codexModel) {
-      base.push("-m", this.config.codexModel);
+    if (model) {
+      base.push("-m", model);
     }
 
     if (this.config.codexEnableSearch) {

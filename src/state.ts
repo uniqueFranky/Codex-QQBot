@@ -9,6 +9,8 @@ export interface BotState {
   lastOpenid?: string;
   injectMemoryOnNextRun?: boolean;
   pendingMemoryDiff?: string;
+  codexModel?: string;
+  messageQueue?: string[];
 }
 
 export interface NamedSession {
