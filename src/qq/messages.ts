@@ -41,11 +41,16 @@ export class QQMessages {
   }
 
   async sendImage(context: C2CReplyContext, filePath: string): Promise<void> {
-    const fileInfo = await this.uploadImage(context.openid, filePath);
+    const fileInfo = await this.uploadMedia(context.openid, filePath, 1);
     await this.sendMedia(context, fileInfo);
   }
 
-  private async uploadImage(openid: string, filePath: string): Promise<string> {
+  async sendFile(context: C2CReplyContext, filePath: string): Promise<void> {
+    const fileInfo = await this.uploadMedia(context.openid, filePath, 4);
+    await this.sendMedia(context, fileInfo);
+  }
+
+  private async uploadMedia(openid: string, filePath: string, fileType: number): Promise<string> {
     const token = await this.auth.getAccessToken();
     const url = `${this.config.qqApiBase}/v2/users/${encodeURIComponent(openid)}/files`;
     const fileData = readFileSync(filePath).toString("base64");
@@ -57,7 +62,7 @@ export class QQMessages {
         "content-type": "application/json"
       },
       body: JSON.stringify({
-        file_type: 1,
+        file_type: fileType,
         srv_send_msg: false,
         file_data: fileData
       })
@@ -65,7 +70,7 @@ export class QQMessages {
 
     const body = (await response.json()) as { file_info?: string };
     if (!response.ok || !body.file_info) {
-      throw new Error(`QQ upload image failed: ${response.status} ${JSON.stringify(body)}`);
+      throw new Error(`QQ upload media failed: ${response.status} ${JSON.stringify(body)}`);
     }
 
     return body.file_info;

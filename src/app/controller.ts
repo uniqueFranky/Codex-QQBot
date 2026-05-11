@@ -7,6 +7,13 @@ import type { CodexRunner } from "../codex/runner.js";
 import type { Config } from "../config.js";
 import type { MemoryTool } from "../memory-tool.js";
 import { findNewOutputImages, saveInputImages } from "./images.js";
+import {
+  buildInputFilesPrompt,
+  formatFileList,
+  listReceivedFiles,
+  resolveWorkspaceFile,
+  saveInputFiles
+} from "./files.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -31,7 +38,7 @@ export class BotController {
     const hasImages = message.attachments.some((attachment) =>
       attachment.contentType.startsWith("image/")
     );
-    if (!text && !hasImages) return;
+    if (!text && message.attachments.length === 0) return;
 
     if (text === "/new") {
       this.codex.stop();
@@ -83,6 +90,11 @@ export class BotController {
       return;
     }
 
+    if (text === "/file" || text.startsWith("/file ")) {
+      await this.handleFileCommand(message, text);
+      return;
+    }
+
     if (text === "/interrupt" || text.startsWith("/interrupt ")) {
       await this.handleInterruptCommand(message, text);
       return;
@@ -109,16 +121,53 @@ export class BotController {
     }
 
     if (this.codex.isRunning()) {
-      if (!text) {
+      const savedFiles = await saveInputFiles(this.config, message.attachments);
+      const filePrompt = buildInputFilesPrompt(savedFiles);
+      if (!text && !filePrompt) {
         await this.messages.sendText(message, "当前 Codex 正在运行。图片消息不能入队，请稍后重发。");
         return;
       }
-      const length = this.enqueueMessage(text);
+      const length = this.enqueueMessage(appendFilePrompt(text || "请查看我发送的文件。", filePrompt));
       await this.messages.sendText(message, `当前 Codex 正在运行，已加入队列。队列长度：${length}`);
       return;
     }
 
-    await this.startCodexTask(message, text || "请分析这张图片。");
+    await this.startCodexTask(
+      message,
+      text || (hasImages ? "请分析这张图片。" : "请查看我发送的文件。")
+    );
+  }
+
+  private async handleFileCommand(message: QQPrivateMessage, text: string): Promise<void> {
+    const rest = text.slice("/file".length).trim();
+    if (!rest || rest === "list" || rest === "recent") {
+      const files = await listReceivedFiles(this.config);
+      await this.messages.sendMarkdown(
+        message,
+        ["最近接收的文件：", "", "```text", formatFileList(files), "```"].join("\n")
+      );
+      return;
+    }
+
+    if (rest.startsWith("send ")) {
+      const inputPath = rest.slice(5).trim();
+      if (!inputPath) {
+        await this.messages.sendText(message, "用法：/file send <workspace内文件路径>");
+        return;
+      }
+
+      try {
+        const file = await resolveWorkspaceFile(this.config, inputPath);
+        await this.messages.sendFile(message, file.path);
+        await this.messages.sendText(message, `已发送文件：${file.relativePath}`);
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        await this.messages.sendText(message, `发送文件失败：${detail}`);
+      }
+      return;
+    }
+
+    await this.messages.sendText(message, fileUsage());
   }
 
   private async handleRunCommand(message: QQPrivateMessage, text: string): Promise<void> {
@@ -619,8 +668,21 @@ export class BotController {
       state.injectMemoryOnNextRun && !state.threadId ? state.pendingMemoryDiff?.trim() ?? "" : "";
     const startedAtMs = Date.now();
     const imagePaths = await saveInputImages(this.config, message.attachments, message.id);
+    const savedFiles = await saveInputFiles(this.config, message.attachments);
     if (imagePaths.length > 0) {
       await this.messages.sendText(message, `已收到 ${imagePaths.length} 张图片，正在交给 Codex。`);
+    }
+    if (savedFiles.length > 0) {
+      await this.messages.sendMarkdown(
+        message,
+        [
+          `已收到 ${savedFiles.length} 个文件，保存路径：`,
+          "",
+          "```text",
+          ...savedFiles.map((file) => file.path),
+          "```"
+        ].join("\n")
+      );
     }
     let buffered = "";
     let flushTimer: NodeJS.Timeout | undefined;
@@ -642,7 +704,7 @@ export class BotController {
 
     try {
       const result = await this.codex.run({
-        prompt: text,
+        prompt: appendFilePrompt(text, buildInputFilesPrompt(savedFiles)),
         threadId: state.threadId,
         imagePaths,
         systemPrompt: buildMemorySystemPrompt(memory, memoryDiff),
@@ -849,6 +911,19 @@ function queueUsage(): string {
     "/queue clear",
     "/interrupt <纠偏消息>"
   ].join("\n");
+}
+
+function fileUsage(): string {
+  return ["用法：", "/file list", "/file recent", "/file send <workspace内文件路径>"].join(
+    "\n"
+  );
+}
+
+function appendFilePrompt(text: string, filePrompt: string): string {
+  const trimmedFilePrompt = filePrompt.trim();
+  if (!trimmedFilePrompt) return text;
+  const trimmedText = text.trim() || "请查看我发送的文件。";
+  return `${trimmedText}\n\n${trimmedFilePrompt}`;
 }
 
 interface ProcessInfo {

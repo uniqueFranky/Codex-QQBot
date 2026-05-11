@@ -16,6 +16,7 @@ export interface QQAttachment {
   filename: string;
   size?: number;
   url?: string;
+  voiceWavUrl?: string;
   width?: number;
   height?: number;
 }
@@ -241,6 +242,7 @@ function extractAttachments(message: Record<string, unknown>): QQAttachment[] {
       filename: stringField(item, "filename") ?? "attachment",
       size: numberField(item, "size"),
       url: stringField(item, "url"),
+      voiceWavUrl: stringField(item, "voice_wav_url"),
       width: numberField(item, "width"),
       height: numberField(item, "height")
     }));

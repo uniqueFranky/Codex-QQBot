@@ -15,10 +15,13 @@
 - 如果 Codex 正在执行任务，新的普通消息会加入队列；需要立即纠偏时使用 `/interrupt <消息>`。
 - 支持接收 QQ 单聊图片，下载到 `workspace/qq-images` 后传给 Codex。
 - 支持发送 Codex 在 `workspace` 中新生成或修改的图片文件。
+- 支持接收 QQ 单聊文件，下载到 `workspace/qq-files/<日期>` 后把路径传给 Codex 读取。
+- 支持通过 `/file send <path>` 或容器内 `qq-file send <path>` 发送 `workspace` 内文件。
 - 支持用 QQ Markdown 消息发送 Codex 的回答；发送失败会自动回退为普通文本。
 - 支持 Codex 官方 memories，通过 `/memory` 管理容器内 Codex 记忆；`/new` 后的下一次任务会把当前记忆作为一次性系统提示传入。
 - 提供容器内 `qq-memory` CLI 和 Codex skill，Codex 可在用户要求“记住/忘记/查看记忆”时自行调用同一套记忆工具。
 - 提供容器内 `qq-notify` CLI 和 Codex skill，用于按需发送孤立 QQ 通知；普通回复不应使用。
+- 提供容器内 `qq-file` CLI 和 Codex skill，用于按需发送文件；Codex 主动发送前应先询问确认。
 - Docker 模式下 Codex 在容器内拥有完整权限，宿主机边界由 Docker 挂载目录控制。
 - 容器内 HTTP/HTTPS 流量可以走宿主机代理。
 
@@ -35,6 +38,7 @@
 /session  查看和管理命名 Codex 会话
 /model    查看或切换 Codex 模型
 /queue    查看和管理待处理消息队列
+/file     查看和发送文件
 /interrupt 中断当前 Codex 任务并立即处理纠偏消息
 ```
 
@@ -91,6 +95,16 @@
 ```
 
 `/model <model>` 会把选择保存到 `data/state.json`，重启容器后仍会生效。它不会修改 `.env` 或 `codex-home/config.toml`。
+
+`/file` 支持的命令：
+
+```text
+/file list             查看最近接收的文件
+/file recent           查看最近接收的文件
+/file send <path>      发送 workspace 内文件
+```
+
+`/file send` 可以使用 `/workspace` 绝对路径，也可以使用相对 `workspace` 的路径。为避免误发密钥和运行数据，bot 只允许发送 `workspace` 内的普通文件。
 
 ## 目录结构
 
@@ -297,6 +311,55 @@ QQ gateway connected
 ```
 
 当前图片发送依赖 QQ 单聊富媒体接口：先上传图片文件，再发送 `msg_type: 7` 的富媒体消息。
+
+## 文件收发
+
+接收非图片附件时，bot 会把 QQ 单聊事件中的附件流式下载到：
+
+```text
+/workspace/qq-files/<日期>/<文件名>
+```
+
+例如：
+
+```text
+/workspace/qq-files/2026-05-08/report.pdf
+```
+
+如果同一天出现重名文件，会自动重命名为 `report-1.pdf`、`report-2.pdf`。文件保存后，bot 会把本地路径写入本轮 Codex prompt，由 Codex 自行读取文件内容。当前不主动限制接收文件大小，实际限制取决于 QQ 附件链接、容器磁盘和网络。
+
+查看和发送文件：
+
+```text
+/file list
+/file recent
+/file send /workspace/report.html
+/file send report.html
+```
+
+发送文件只允许 `workspace` 内路径。普通文件发送依赖 QQ API v2 单聊富媒体接口：先用 `file_type: 4` 上传文件，再发送 `msg_type: 7` 的富媒体消息。上传接口使用 `file_data` base64，因此发送大文件时会占用进程内存；如果 QQ 返回类型、大小或权限错误，bot 会把错误返回给用户。
+
+容器内也提供独立 CLI：
+
+```bash
+qq-file list
+qq-file recent
+qq-file send /workspace/report.html
+```
+
+默认目标是 bot 最近收到的单聊 `openid`，也可以用环境变量覆盖：
+
+```bash
+QQ_FILE_OPENID=<openid> qq-file send /workspace/report.html
+```
+
+镜像会安装内置 skill 到：
+
+```text
+/codex-home/skills/qq-file
+```
+
+当你明确要求 Codex “发送这个文件”时，Codex 可以按 skill 指令调用 `qq-file send`。如果 Codex 自己判断某个生成文件应该发给你，skill 要求它先询问确认。
 
 ## 记忆
 

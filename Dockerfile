@@ -141,7 +141,8 @@ RUN mkdir -p /workspace /data /codex-home /opt/codex-config \
   && chmod +x /usr/local/bin/docker-entrypoint.sh \
   && printf '#!/bin/sh\nexec node /app/dist/memory-cli.js "$@"\n' > /usr/local/bin/qq-memory \
   && printf '#!/bin/sh\nexec node /app/dist/qq-notify-cli.js "$@"\n' > /usr/local/bin/qq-notify \
-  && chmod +x /usr/local/bin/qq-memory /usr/local/bin/qq-notify
+  && printf '#!/bin/sh\nexec node /app/dist/qq-file-cli.js "$@"\n' > /usr/local/bin/qq-file \
+  && chmod +x /usr/local/bin/qq-memory /usr/local/bin/qq-notify /usr/local/bin/qq-file
 
 ENTRYPOINT ["docker-entrypoint.sh"]
 CMD ["node", "dist/index.js"]
